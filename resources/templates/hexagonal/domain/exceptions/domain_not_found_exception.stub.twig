@@ -1,0 +1,26 @@
+{#
+  Stub: Domain not found exception
+  Variables:
+    - namespaces.shared_exceptions
+#}
+<?php
+
+namespace {{ namespaces.shared_exceptions|default('App\\Domain\\Shared\\Exceptions') }};
+
+class DomainNotFoundException extends DomainException
+{
+    public static function defaultCode(): string
+    {
+        return 'domain.not_found';
+    }
+
+    public static function defaultMessage(): string
+    {
+        return 'El recurso solicitado no existe.';
+    }
+
+    public static function defaultStatus(): int
+    {
+        return 404;
+    }
+}

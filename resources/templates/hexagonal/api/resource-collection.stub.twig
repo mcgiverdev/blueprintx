@@ -1,0 +1,48 @@
+{#
+  Stub: Resource collection for paginated responses
+  Variables:
+    - collection.namespace
+    - collection.class
+    - collection.resource_class
+    - collection.preserve_query
+#}
+<?php
+
+namespace {{ collection.namespace|default('App\\Http\\Resources') }};
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\ResourceCollection;
+
+class {{ collection.class|default('SampleCollection') }} extends ResourceCollection
+{
+    /**
+     * The resource that this resource collects.
+     *
+     * @var class-string<\Illuminate\Http\Resources\Json\JsonResource>
+     */
+    public $collects = {{ collection.resource_class|default('SampleResource') }}::class;
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toArray(Request $request): array
+    {
+        return parent::toArray($request);
+    }
+
+    public function paginationInformation($request, array $paginated, array $default): array
+    {
+        $meta = $default['meta'] ?? [];
+
+        return [
+            'meta' => array_filter([
+                'current_page' => $meta['current_page'] ?? null,
+                'from' => $meta['from'] ?? null,
+                'per_page' => $meta['per_page'] ?? null,
+                'to' => $meta['to'] ?? null,
+                'last_page' => $meta['last_page'] ?? null,
+                'total' => $meta['total'] ?? null,
+            ], static fn ($value): bool => $value !== null),
+        ];
+    }
+}

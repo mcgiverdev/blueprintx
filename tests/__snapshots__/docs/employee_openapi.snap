@@ -1,0 +1,416 @@
+openapi: 3.1.0
+info:
+  title: 'Employee API'
+  version: 0.1.0
+tags:
+  - name: Hr
+paths:
+  /hr/employees:
+    get:
+      tags:
+        - Hr
+      summary: 'Listar Employees'
+      operationId: listEmployees
+      parameters:
+        - name: page
+          in: query
+          description: 'Número de página a recuperar.'
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: per_page
+          in: query
+          description: 'Cantidad de elementos por página (máximo 100).'
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 15
+        - name: search
+          in: query
+          description: 'Filtra por coincidencias en first_name, last_name o email.'
+          schema:
+            type: string
+        - name: sort
+          in: query
+          description: 'Campo de ordenamiento. Prefije con "-" para ordenar de forma descendente. Valores permitidos: first_name, last_name, email, salary, active, department_id, created_at, updated_at.'
+          schema:
+            type: string
+            example: '-updated_at'
+        - name: include
+          in: query
+          description: 'Recursos relacionados a incluir. Actualmente sólo se admite "department".'
+          schema:
+            type: string
+            example: 'department'
+      responses:
+        200:
+          description: 'Listado paginado devuelto correctamente.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeCollection'
+    post:
+      tags:
+        - Hr
+      summary: 'Crear Employee'
+      operationId: createEmployee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmployeeInput'
+      responses:
+        201:
+          description: 'Employee creado correctamente.'
+          headers:
+            ETag:
+              description: 'Versión del recurso en formato W/"<timestamp>".'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+        409:
+          description: 'Conflicto al crear el recurso.'
+          x-error-code: domain.conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+        422:
+          description: 'Error de validación.'
+          x-error-code: domain.validation_failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+              example:
+                error:
+                  code: domain.validation_failed
+                  message: 'Los datos proporcionados no son válidos.'
+                  details:
+                    campo:
+                      - 'Este valor no es válido.'
+  '/hr/employees/{id}':
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 'Identificador numérico del recurso Employee.'
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags:
+        - Hr
+      summary: 'Mostrar Employee'
+      operationId: showEmployee
+      responses:
+        200:
+          description: 'Employee encontrado.'
+          headers:
+            ETag:
+              description: 'Versión del recurso en formato W/"<timestamp>".'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+        404:
+          description: 'Recurso no encontrado.'
+          x-error-code: domain.not_found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+    put:
+      tags:
+        - Hr
+      summary: 'Actualizar Employee'
+      operationId: updateEmployee
+      parameters:
+        - $ref: '#/components/parameters/IfMatchHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmployeeInput'
+      responses:
+        200:
+          description: 'Employee actualizado.'
+          headers:
+            ETag:
+              description: 'Versión del recurso en formato W/"<timestamp>".'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+        404:
+          description: 'Recurso no encontrado.'
+          x-error-code: domain.not_found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+        409:
+          description: 'Conflicto al actualizar el recurso.'
+          x-error-code: domain.conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+        422:
+          description: 'Error de validación.'
+          x-error-code: domain.validation_failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+              example:
+                error:
+                  code: domain.validation_failed
+                  message: 'Los datos proporcionados no son válidos.'
+                  details:
+                    campo:
+                      - 'Este valor no es válido.'
+    delete:
+      tags:
+        - Hr
+      summary: 'Eliminar Employee'
+      operationId: deleteEmployee
+      parameters:
+        - $ref: '#/components/parameters/IfMatchHeader'
+      responses:
+        204:
+          description: 'Employee eliminado.'
+        404:
+          description: 'Recurso no encontrado.'
+          x-error-code: domain.not_found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+        409:
+          description: 'Conflicto al eliminar el recurso.'
+          x-error-code: domain.conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainError'
+components:
+  parameters:
+    IfMatchHeader:
+      name: If-Match
+      in: header
+      required: true
+      description: 'Versión débil devuelta en el encabezado ETag. Utilice "*" para aceptar cualquier versión.'
+      schema:
+        type: string
+        example: 'W/"1730146317.123456"'
+  schemas:
+    Employee:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/EmployeeData'
+    EmployeeData:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        salary:
+          type: string
+          pattern: '^[0-9]+\.[0-9]{2}$'
+          description: 'Importe decimal con dos decimales representado como cadena.'
+        active:
+          type: boolean
+          default: true
+        department_id:
+          type: integer
+          format: int64
+          description: 'Identificador del departamento asociado.'
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        deleted_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        department:
+          allOf:
+            - $ref: '#/components/schemas/Department'
+          nullable: true
+          readOnly: true
+          description: 'Recurso relacionado embebido.'
+      required:
+        - id
+        - first_name
+        - last_name
+        - email
+        - salary
+        - active
+        - department_id
+        - created_at
+        - updated_at
+    EmployeeInput:
+      type: object
+      properties:
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        salary:
+          type: number
+          format: double
+        active:
+          type: boolean
+          default: true
+        department_id:
+          type: integer
+          format: int64
+      required:
+        - first_name
+        - last_name
+        - email
+        - salary
+        - active
+        - department_id
+    EmployeeCollection:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmployeeData'
+        meta:
+          type: object
+          properties:
+            current_page:
+              type: integer
+            from:
+              type: integer
+              nullable: true
+            per_page:
+              type: integer
+            to:
+              type: integer
+              nullable: true
+            last_page:
+              type: integer
+              nullable: true
+            total:
+              type: integer
+              nullable: true
+      required:
+        - data
+    Department:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        name:
+          type: string
+          maxLength: 100
+        active:
+          type: boolean
+          default: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        deleted_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+        - id
+        - name
+        - active
+        - created_at
+        - updated_at
+    DomainError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+          required:
+            - code
+            - message
+      required:
+        - error
+x-domain-errors:
+  - code: domain.not_found
+    message: 'El recurso solicitado no existe.'
+    status: 404
+    entity: Employee
+  - code: domain.conflict
+    message: 'No se pudo completar la operación por un conflicto de dominio.'
+    status: 409
+    entity: Employee
+  - code: domain.conflict.missing_version
+    message: 'Se requiere el encabezado de control de versión para completar la operación.'
+    status: 409
+    entity: Employee
+  - code: domain.conflict.invalid_version
+    message: 'El encabezado de control de versión tiene un formato inválido.'
+    status: 409
+    entity: Employee
+  - code: domain.conflict.stale_resource
+    message: 'El recurso fue modificado por otro proceso.'
+    status: 409
+    entity: Employee
+  - code: domain.validation_failed
+    message: 'Los datos proporcionados no son válidos.'
+    status: 422
+    entity: Employee

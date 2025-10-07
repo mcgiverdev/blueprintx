@@ -1,0 +1,22 @@
+<?php
+
+namespace App\Application\Hr\Commands;
+
+use App\Domain\Hr\Repositories\EmployeeRepositoryInterface;
+use App\Domain\Hr\Models\Employee;
+
+class UpdateEmployeeCommand
+{
+    public function __construct(private readonly EmployeeRepositoryInterface $repository)
+    {
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function handle(Employee $employee, array $payload): Employee
+    {
+        // TODO: validar cambios antes de delegar al repositorio
+        return $this->repository->update($employee, $payload);
+    }
+}

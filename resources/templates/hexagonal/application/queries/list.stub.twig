@@ -1,0 +1,39 @@
+{#
+  Stub: Application query to list entities with filtering
+  Variables:
+    - namespaces.queries
+    - namespaces.filters
+    - domain.repositories
+    - naming.entity_studly
+    - naming.entity_plural_studly
+    - naming.entity_variable
+#}
+<?php
+
+namespace {{ namespaces.queries|default('App\\Application\\Queries') }};
+
+use {{ namespaces.filters|default('App\\Application\\Queries\\Filters') }}\{{ naming.entity_studly|default('Sample') }}Filter;
+use {{ domain.repositories|default('App\\Domain\\Repositories') }}\{{ naming.entity_studly|default('Sample') }}RepositoryInterface;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Http\Request;
+
+class List{{ naming.entity_plural_studly|default('Samples') }}Query
+{
+    public function __construct(
+        private readonly {{ naming.entity_studly|default('Sample') }}RepositoryInterface $repository,
+        private readonly {{ naming.entity_studly|default('Sample') }}Filter $filter,
+    ) {
+    }
+
+    public function handle(Request $request, array $options = []): LengthAwarePaginator
+    {
+        $perPage = (int) min($request->integer('per_page', 15), 100);
+
+        $filters = array_merge($options, [
+            'request' => $request,
+            'filter' => $this->filter,
+        ]);
+
+        return $this->repository->paginate($filters, $perPage, $options);
+    }
+}

@@ -1,0 +1,34 @@
+{#
+  Stub: Custom domain exception derived from blueprint definition
+  Variables:
+    - error.namespace
+    - error.extends
+    - error.extends_fqcn
+    - error.exception_class
+    - error.code
+    - error.message
+    - error.status
+#}
+<?php
+
+namespace {{ error.namespace|default('App\\Domain\\Exceptions') }};
+
+use {{ error.extends_fqcn|default('App\\Domain\\Shared\\Exceptions\\DomainException') }};
+
+class {{ error.exception_class|default('CustomDomainException') }} extends {{ error.extends|default('DomainException') }}
+{
+    public static function defaultCode(): string
+    {
+        return {{ error.code|default('domain.custom_error')|json_encode|raw }};
+    }
+
+    public static function defaultMessage(): string
+    {
+        return {{ error.message|default('Se produjo un error de dominio específico.')|json_encode|raw }};
+    }
+
+    public static function defaultStatus(): int
+    {
+        return {{ error.status|default(400) }};
+    }
+}

@@ -1,0 +1,56 @@
+<?php
+
+namespace App\Domain\Hr\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Domain\Hr\Models\Department;
+use App\Domain\Hr\Models\Contract;
+
+class Employee extends Model
+{
+    use HasFactory;
+    use SoftDeletes;
+
+    protected $table = 'employees';
+
+    /**
+     * @var array<int, string>
+     */
+    protected $fillable = [
+        'id',
+        'first_name',
+        'last_name',
+        'email',
+        'salary',
+        'active',
+        'department_id',
+        'hired_at',
+    ];
+
+    /**
+     * @var array<string, string>
+     */
+    protected $casts = [
+        'active' => 'boolean',
+        'created_at' => 'datetime',
+        'deleted_at' => 'datetime',
+        'department_id' => 'string',
+        'hired_at' => 'datetime',
+        'id' => 'string',
+        'salary' => 'decimal:2',
+        'updated_at' => 'datetime',
+    ];
+
+    public function department(): BelongsTo
+    {
+        return $this->belongsTo(Department::class, 'department_id');
+    }
+    public function contracts(): HasMany
+    {
+        return $this->hasMany(Contract::class, 'employee_id');
+    }
+}

@@ -1,0 +1,141 @@
+<?php
+
+namespace {{ namespaces.tests|default('Tests\Feature') }};
+
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+use {{ entity.class|default('App\\Domain\\Sample\\Models\\Sample') }};
+{% for relation in relations %}use {{ relation.import }};
+{% endfor %}
+
+class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_index_returns_paginated_list(): void
+    {
+{% for relation in relations %}        ${{ relation.variable }} = {{ relation.class|class_basename }}::factory()->create();
+{% endfor %}
+{% if tests.factory_overrides|length > 0 %}        {{ entity.class|class_basename }}::factory()->count({{ tests.index_count }})->create([
+{% for override in tests.factory_overrides %}            '{{ override.name }}' => {{ override.value }},
+{% endfor %}        ]);
+{% else %}        {{ entity.class|class_basename }}::factory()->count({{ tests.index_count }})->create();
+{% endif %}
+
+        $response = $this->getJson('{{ routes.api_resource }}');
+
+        $response
+            ->assertOk()
+            ->assertJsonStructure([
+                'data',
+                'meta' => ['current_page', 'from', 'last_page', 'per_page', 'to', 'total'],
+            ]);
+
+        $this->assertSame({{ tests.index_count }}, $response->json('meta.total'));
+{% for include in tests.includes %}
+    $this->assertNotNull($response->json('{{ include.index_path }}'));
+{% if include.relation %}
+    $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.index_path }}'));
+{% endif %}
+{% endfor %}
+    }
+
+    public function test_can_store_{{ naming.entity_variable }}(): void
+    {
+{% for relation in relations %}        ${{ relation.variable }} = {{ relation.class|class_basename }}::factory()->create();
+{% endfor %}
+
+        $payload = [
+{% for field in tests.store_payload %}            '{{ field.name }}' => {{ field.value }},
+{% endfor %}        ];
+
+        $response = $this->postJson('{{ routes.api_resource }}', $payload);
+
+        $response->assertCreated();
+{% if tests.store_response_fragment|length > 0 %}
+        $response->assertJsonFragment([
+{% for fragment in tests.store_response_fragment %}            '{{ fragment.name }}' => {{ fragment.value }},
+{% endfor %}        ]);
+{% endif %}
+{% if optimistic_locking.enabled %}
+    $response->assertHeader('{{ optimistic_locking.response_header }}');
+{% endif %}
+{% for include in tests.includes %}
+    $this->assertNotNull($response->json('{{ include.store_path }}'));
+{% if include.relation %}
+    $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.store_path }}'));
+{% endif %}
+{% endfor %}
+
+        $this->assertDatabaseHas('{{ blueprint.table }}', [
+{% for field in tests.store_payload %}            '{{ field.name }}' => {{ field.value }},
+{% endfor %}        ]);
+    }
+
+    public function test_can_update_{{ naming.entity_variable }}(): void
+    {
+{% for relation in relations %}        ${{ relation.variable }} = {{ relation.class|class_basename }}::factory()->create();
+{% endfor %}
+
+{% if tests.factory_overrides|length > 0 %}        ${{ naming.entity_variable }} = {{ entity.class|class_basename }}::factory()->create([
+{% for override in tests.factory_overrides %}            '{{ override.name }}' => {{ override.value }},
+{% endfor %}        ]);
+{% else %}        ${{ naming.entity_variable }} = {{ entity.class|class_basename }}::factory()->create();
+{% endif %}
+
+        $payload = [
+{% for field in tests.update_payload %}            '{{ field.name }}' => {{ field.value }},
+{% endfor %}        ];
+
+{% if optimistic_locking.enabled and optimistic_locking.require_header %}        $response = $this->putJson('{{ routes.api_resource }}/' . ${{ naming.entity_variable }}->id, $payload, [
+        '{{ optimistic_locking.header }}' => {% if tests.optimistic_locking_token_expression %}{{ tests.optimistic_locking_token_expression }}{% else %}'*'{% endif %},
+    ]);
+{% else %}        $response = $this->putJson('{{ routes.api_resource }}/' . ${{ naming.entity_variable }}->id, $payload);
+{% endif %}
+
+        $response->assertOk();
+{% if tests.update_response_fragment|length > 0 %}
+        $response->assertJsonFragment([
+{% for fragment in tests.update_response_fragment %}            '{{ fragment.name }}' => {{ fragment.value }},
+{% endfor %}        ]);
+{% endif %}
+{% if optimistic_locking.enabled %}
+    $response->assertHeader('{{ optimistic_locking.response_header }}');
+{% endif %}
+{% for include in tests.includes %}
+    $this->assertNotNull($response->json('{{ include.store_path }}'));
+{% if include.relation %}
+    $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.store_path }}'));
+{% endif %}
+{% endfor %}
+
+        $this->assertDatabaseHas('{{ blueprint.table }}', [
+            'id' => ${{ naming.entity_variable }}->id,
+{% for field in tests.update_payload %}            '{{ field.name }}' => {{ field.value }},
+{% endfor %}        ]);
+    }
+
+    public function test_can_delete_{{ naming.entity_variable }}(): void
+    {
+{% for relation in relations %}        ${{ relation.variable }} = {{ relation.class|class_basename }}::factory()->create();
+{% endfor %}
+
+{% if tests.factory_overrides|length > 0 %}        ${{ naming.entity_variable }} = {{ entity.class|class_basename }}::factory()->create([
+{% for override in tests.factory_overrides %}            '{{ override.name }}' => {{ override.value }},
+{% endfor %}        ]);
+{% else %}        ${{ naming.entity_variable }} = {{ entity.class|class_basename }}::factory()->create();
+{% endif %}
+
+{% if optimistic_locking.enabled and optimistic_locking.require_header %}        $response = $this->deleteJson('{{ routes.api_resource }}/' . ${{ naming.entity_variable }}->id, [], [
+            '{{ optimistic_locking.header }}' => {% if tests.optimistic_locking_token_expression %}{{ tests.optimistic_locking_token_expression }}{% else %}'*'{% endif %},
+        ]);
+{% else %}        $response = $this->deleteJson('{{ routes.api_resource }}/' . ${{ naming.entity_variable }}->id);
+{% endif %}
+
+        $response->assertNoContent();
+
+        $this->assert{% if tests.uses_soft_deletes %}SoftDeleted{% else %}DatabaseMissing{% endif %}('{{ blueprint.table }}', [
+            'id' => ${{ naming.entity_variable }}->id,
+        ]);
+    }
+}

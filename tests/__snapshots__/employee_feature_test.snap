@@ -1,0 +1,132 @@
+<?php
+
+namespace Tests\Feature\Hr;
+
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+use App\Domain\Hr\Models\Employee;
+use App\Domain\Hr\Models\Department;
+
+class EmployeeFeatureTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_index_returns_paginated_list(): void
+    {
+        $department = Department::factory()->create();
+        Employee::factory()->count(3)->create([
+            'department_id' => $department->id,
+        ]);
+
+        $response = $this->getJson('/api/hr/employees');
+
+        $response
+            ->assertOk()
+            ->assertJsonStructure([
+                'data',
+                'meta' => ['current_page', 'from', 'last_page', 'per_page', 'to', 'total'],
+            ]);
+
+        $this->assertSame(3, $response->json('meta.total'));
+        $this->assertNotNull($response->json('data.0.department.id'));
+        $this->assertSame($department->id, $response->json('data.0.department.id'));
+    }
+
+    public function test_can_store_employee(): void
+    {
+        $department = Department::factory()->create();
+
+        $payload = [
+            'first_name' => 'Sample First Name',
+            'last_name' => 'Sample Last Name',
+            'email' => 'john.doe@example.com',
+            'salary' => '4200.00',
+            'active' => true,
+            'department_id' => $department->id,
+            'hired_at' => '2025-01-01T10:00:00Z',
+        ];
+
+        $response = $this->postJson('/api/hr/employees', $payload);
+
+        $response->assertCreated();
+        $response->assertJsonFragment([
+            'first_name' => 'Sample First Name',
+            'last_name' => 'Sample Last Name',
+        ]);
+        $response->assertHeader('ETag');
+        $this->assertNotNull($response->json('data.department.id'));
+        $this->assertSame($department->id, $response->json('data.department.id'));
+
+        $this->assertDatabaseHas('employees', [
+            'first_name' => 'Sample First Name',
+            'last_name' => 'Sample Last Name',
+            'email' => 'john.doe@example.com',
+            'salary' => '4200.00',
+            'active' => true,
+            'department_id' => $department->id,
+            'hired_at' => '2025-01-01T10:00:00Z',
+        ]);
+    }
+
+    public function test_can_update_employee(): void
+    {
+        $department = Department::factory()->create();
+
+        $employee = Employee::factory()->create([
+            'department_id' => $department->id,
+        ]);
+
+        $payload = [
+            'first_name' => 'Updated First Name',
+            'last_name' => 'Updated Last Name',
+            'email' => 'jane.doe@example.com',
+            'salary' => '6500.50',
+            'active' => false,
+            'department_id' => $department->id,
+            'hired_at' => '2025-12-31T15:30:00Z',
+        ];
+
+        $response = $this->putJson('/api/hr/employees/' . $employee->id, $payload, [
+            'If-Match' => '*',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'first_name' => 'Updated First Name',
+            'last_name' => 'Updated Last Name',
+        ]);
+        $response->assertHeader('ETag');
+        $this->assertNotNull($response->json('data.department.id'));
+        $this->assertSame($department->id, $response->json('data.department.id'));
+
+        $this->assertDatabaseHas('employees', [
+            'id' => $employee->id,
+            'first_name' => 'Updated First Name',
+            'last_name' => 'Updated Last Name',
+            'email' => 'jane.doe@example.com',
+            'salary' => '6500.50',
+            'active' => false,
+            'department_id' => $department->id,
+            'hired_at' => '2025-12-31T15:30:00Z',
+        ]);
+    }
+
+    public function test_can_delete_employee(): void
+    {
+        $department = Department::factory()->create();
+
+        $employee = Employee::factory()->create([
+            'department_id' => $department->id,
+        ]);
+
+        $response = $this->deleteJson('/api/hr/employees/' . $employee->id, [], [
+            'If-Match' => '*',
+        ]);
+
+        $response->assertNoContent();
+
+        $this->assertSoftDeleted('employees', [
+            'id' => $employee->id,
+        ]);
+    }
+}

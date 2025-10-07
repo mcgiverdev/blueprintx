@@ -1,0 +1,38 @@
+{#
+  Stub: JsonResource for entity representation
+  Variables:
+    - resource.namespace
+    - resource.class
+    - resource.attributes
+#}
+<?php
+
+namespace {{ resource.namespace|default('App\\Http\\Resources') }};
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+{% if resource.imports is not empty %}
+{% for import in resource.imports %}
+use {{ import }};
+{% endfor %}
+{% endif %}
+
+class {{ resource.class|default('SampleResource') }} extends JsonResource
+{
+    /**
+     * @return array<string, mixed>
+     */
+    public function toArray(Request $request): array
+    {
+        return [
+{% for attribute in resource.attributes|default([]) %}
+            '{{ attribute }}' => $this->{{ attribute }},
+{% else %}
+            // TODO: map resource attributes
+{% endfor %}
+{% for relationship in resource.relationships|default([]) %}
+            '{{ relationship.property }}' => {{ relationship.expression }},
+{% endfor %}
+        ];
+    }
+}

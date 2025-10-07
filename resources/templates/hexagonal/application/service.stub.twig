@@ -1,0 +1,22 @@
+{#
+  Stub: Hexagonal application service
+  Variables sugeridas:
+    - entity
+    - namespaces.application
+#}
+<?php
+
+namespace {{ namespaces.application|default('App\\Application') }}\Services;
+
+final class {{ entity.name|default('Sample')|studly }}Service
+{
+    public function __construct()
+    {
+        // TODO: inyectar dependencias necesarias
+    }
+
+    public function handle(): void
+    {
+        // TODO: implementar caso de uso
+    }
+}

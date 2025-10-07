@@ -1,0 +1,30 @@
+{#
+  Stub: Application command to create an entity
+  Variables:
+    - namespaces.commands
+    - domain.repositories
+    - naming.entity_studly
+    - naming.entity_variable
+#}
+<?php
+
+namespace {{ namespaces.commands|default('App\\Application\\Commands') }};
+
+use {{ domain.repositories|default('App\\Domain\\Repositories') }}\{{ naming.entity_studly|default('Sample') }}RepositoryInterface;
+use {{ domain.models|default('App\\Domain\\Models') }}\{{ naming.entity_studly|default('Sample') }};
+
+class Create{{ naming.entity_studly|default('Sample') }}Command
+{
+    public function __construct(private readonly {{ naming.entity_studly|default('Sample') }}RepositoryInterface $repository)
+    {
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function handle(array $payload): {{ naming.entity_studly|default('Sample') }}
+    {
+        // TODO: aplicar reglas adicionales antes de crear la entidad
+        return $this->repository->create($payload);
+    }
+}

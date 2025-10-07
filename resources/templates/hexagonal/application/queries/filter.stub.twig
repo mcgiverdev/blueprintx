@@ -1,0 +1,77 @@
+{#
+  Stub: Application filter for queries
+  Variables:
+    - namespaces.filters
+    - naming.entity_studly
+    - naming.entity_variable
+#}
+<?php
+
+namespace {{ namespaces.filters|default('App\\Application\\Queries\\Filters') }};
+
+use App\Application\Shared\Filters\QueryFilter;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
+
+{% set filterMeta = filter|default({}) %}
+{% set allowedIncludes = filterMeta.allowed_includes|default([]) %}
+{% set allowedSorts = filterMeta.allowed_sorts|default([]) %}
+{% set searchable = filterMeta.searchable|default([]) %}
+{% set defaultSort = filterMeta.default_sort|default({'column': 'created_at', 'direction': 'asc'}) %}
+{% set defaultSortColumn = defaultSort.column|default('created_at') %}
+{% set defaultSortDirection = defaultSort.direction|default('asc') %}
+
+class {{ naming.entity_studly|default('Sample') }}Filter extends QueryFilter
+{
+    /**
+     * @var array<int, string>
+     */
+    protected array $allowedIncludes = [{% if allowedIncludes %}
+{% for include in allowedIncludes %}
+        '{{ include }}',
+{% endfor %}
+{% endif %}
+    ];
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $allowedSorts = [{% if allowedSorts %}
+{% for field in allowedSorts %}
+        '{{ field }}',
+{% endfor %}
+{% endif %}
+    ];
+
+    /**
+     * @var array<string, string>
+     */
+    protected array $defaultSort = [
+        'column' => '{{ defaultSortColumn }}',
+        'direction' => '{{ defaultSortDirection }}',
+    ];
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $searchable = [{% if searchable %}
+{% for field in searchable %}
+        '{{ field }}',
+{% endfor %}
+{% endif %}
+    ];
+
+    protected function filterSearch(string $value): void
+    {
+        $this->builder->where(function (Builder $query) use ($value): void {
+            foreach ($this->searchable as $column) {
+                $query->orWhere($column, 'like', "%{$value}%");
+            }
+        });
+    }
+
+    protected function applyAdditional(Request $request): void
+    {
+        // TODO: agregar filtros específicos del dominio aprovechando $request
+    }
+}

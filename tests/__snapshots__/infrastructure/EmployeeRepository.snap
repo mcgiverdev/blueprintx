@@ -1,0 +1,107 @@
+<?php
+
+namespace App\Infrastructure\Persistence\Eloquent\Hr\Repositories;
+
+use App\Domain\Hr\Models\Employee;
+use App\Domain\Hr\Repositories\EmployeeRepositoryInterface;
+use App\Application\Hr\Queries\Filters\EmployeeFilter;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+
+class EloquentEmployeeRepository implements EmployeeRepositoryInterface
+{
+    public function __construct(private readonly EmployeeFilter $filter)
+    {
+    }
+
+    /**
+     * @return LengthAwarePaginator<Employee>
+     */
+    public function paginate(array $filters = [], int $perPage = 15, array $options = []): LengthAwarePaginator
+    {
+        $builder = Employee::query();
+
+        /** @var Request|null $request */
+        $request = $filters['request'] ?? null;
+
+        if (isset($filters['with']) && is_array($filters['with'])) {
+            $builder = $this->applyIncludes($builder, $filters['with']);
+        }
+
+        if ($request instanceof Request) {
+            $builder = $this->applyFilter($builder, $request);
+        }
+
+        return $builder->paginate(
+            $perPage,
+            $options['columns'] ?? ['*'],
+            'page',
+            $request?->integer('page', 1) ?? 1
+        );
+    }
+
+    /**
+     * @return Collection<int, Employee>
+     */
+    public function search(string $query, array $filters = [], int $limit = 50): Collection
+    {
+        $builder = $this->filter->applySearch(Employee::query(), $query);
+
+        if (isset($filters['with']) && is_array($filters['with'])) {
+            $builder = $this->applyIncludes($builder, $filters['with']);
+        }
+
+        if (isset($filters['request']) && $filters['request'] instanceof Request) {
+            $builder = $this->applyFilter($builder, $filters['request']);
+        }
+
+        return $builder->limit($limit)->get();
+    }
+
+    public function findById(string $id, array $with = []): ?Employee
+    {
+        return Employee::query()
+            ->when($with !== [], fn (Builder $builder) => $builder->with($with))
+            ->find($id);
+    }
+
+    public function create(array $data): Employee
+    {
+        /** @var Employee $model */
+        $model = Employee::create($data);
+
+        return $model->fresh();
+    }
+
+    public function update(Employee $employee, array $data): Employee
+    {
+        $employee->fill($data);
+        $employee->save();
+
+        return $employee->fresh();
+    }
+
+    public function delete(Employee $employee): void
+    {
+        $employee->delete();
+    }
+
+    protected function applyFilter(Builder $builder, Request $request): Builder
+    {
+        return $this->filter->applyTo($builder, $request);
+    }
+
+    /**
+     * @param array<int, string> $with
+     */
+    protected function applyIncludes(Builder $builder, array $with): Builder
+    {
+        if ($with === []) {
+            return $builder;
+        }
+
+        return $builder->with($with);
+    }
+}

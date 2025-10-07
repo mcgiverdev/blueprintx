@@ -1,0 +1,86 @@
+{#
+  Stub: Base domain exception shared across blueprints
+  Variables:
+    - namespaces.shared_exceptions
+#}
+<?php
+
+namespace {{ namespaces.shared_exceptions|default('App\\Domain\\Shared\\Exceptions') }};
+
+use RuntimeException;
+use Throwable;
+
+abstract class DomainException extends RuntimeException
+{
+    protected string $errorCode;
+
+    protected int $statusCode;
+
+    /**
+     * @var array<string, mixed>
+     */
+    protected array $details;
+
+    /**
+     * @param array<string, mixed> $details
+     */
+    public function __construct(string $message = '', ?string $errorCode = null, ?int $statusCode = null, array $details = [], ?Throwable $previous = null)
+    {
+        $message = $message !== '' ? $message : static::defaultMessage();
+        $this->errorCode = $errorCode ?? static::defaultCode();
+        $this->statusCode = $statusCode ?? static::defaultStatus();
+        $this->details = $details;
+
+        parent::__construct($message, 0, $previous);
+    }
+
+    public function statusCode(): int
+    {
+        return $this->statusCode;
+    }
+
+    public function errorCode(): string
+    {
+        return $this->errorCode;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function details(): array
+    {
+        return $this->details;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        $payload = [
+            'code' => $this->errorCode(),
+            'message' => $this->getMessage(),
+        ];
+
+        if ($this->details !== []) {
+            $payload['details'] = $this->details;
+        }
+
+        return $payload;
+    }
+
+    public static function defaultCode(): string
+    {
+        return 'domain.error';
+    }
+
+    public static function defaultMessage(): string
+    {
+        return 'Se produjo un error de dominio.';
+    }
+
+    public static function defaultStatus(): int
+    {
+        return 400;
+    }
+}

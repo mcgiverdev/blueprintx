@@ -1,0 +1,15 @@
+<?php
+
+namespace {{ module_seeder.namespace }};
+
+use Illuminate\Database\Seeder;
+{% for import in module_seeder.imports %}use {{ import }};
+{% endfor %}
+class {{ module_seeder.class_name }} extends Seeder
+{
+    public function run(): void
+    {
+{% for call in module_seeder.seed_calls %}        {{ call.model_class }}::factory()->count({{ call.count }})->create();
+{% endfor %}
+    }
+}

@@ -1,0 +1,201 @@
+{#
+  Stub: Hexagonal API controller
+  Variables sugeridas:
+    - namespaces.api_root
+    - application.commands
+    - application.queries
+    - naming.entity_studly
+    - naming.entity_plural_studly
+    - naming.entity_variable
+    - routes.resource
+#}
+<?php
+
+namespace {{ namespaces.api_root|default('App\Http\Controllers\Api') }};
+
+use App\Http\Controllers\Controller;
+{% for traitImport in controller.traits.imports %}
+use {{ traitImport }};
+{% endfor %}
+use {{ application.commands|default('App\Application\Commands') }}\Create{{ naming.entity_studly|default('Sample') }}Command;
+use {{ application.commands|default('App\Application\Commands') }}\Update{{ naming.entity_studly|default('Sample') }}Command;
+use {{ application.commands|default('App\Application\Commands') }}\Delete{{ naming.entity_studly|default('Sample') }}Command;
+use {{ application.queries|default('App\Application\Queries') }}\List{{ naming.entity_plural_studly|default('Samples') }}Query;
+use {{ application.queries|default('App\Application\Queries') }}\Show{{ naming.entity_studly|default('Sample') }}Query;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+{% if resources.enabled %}
+{% for import in resources.imports %}
+use {{ import|default('App\\Http\\Resources\\Resource') }};
+{% endfor %}
+{% endif %}
+{% if form_requests.enabled %}
+{% for import in form_requests.imports %}
+use {{ import|default('App\\Http\\Requests\\Request') }};
+{% endfor %}
+{% endif %}
+
+class {{ naming.entity_studly|default('Sample') }}Controller extends Controller
+{
+{% if controller.traits.uses is not empty %}
+{% for trait in controller.traits.uses %}
+{{- '    use ' ~ trait ~ ';' ~ "\n" -}}
+{% endfor %}
+{{- "\n" -}}
+{% endif %}
+{% if optimistic_locking.enabled %}
+
+        /**
+         * @var array<string, mixed>
+         */
+                protected array $optimisticLocking = [
+                'header' => '{{ optimistic_locking.header }}',
+                'response_header' => '{{ optimistic_locking.response_header }}',
+                'strategy' => '{{ optimistic_locking.strategy }}',
+                'version_field' => '{{ optimistic_locking.version_field }}',
+                'timestamp_column' => '{{ optimistic_locking.timestamp_column }}',
+                'require_header' => {{ optimistic_locking.require_header ? 'true' : 'false' }},
+                'allow_wildcard' => {{ optimistic_locking.allow_wildcard ? 'true' : 'false' }},
+                ];
+
+{% endif %}
+
+    /**
+     * @return {% if resources.enabled %}{{ resources.collection_class|default(naming.entity_studly|default('Sample') ~ 'Collection') }}{% else %}JsonResponse{% endif %}
+     */
+    public function index(Request $request, List{{ naming.entity_plural_studly|default('Samples') }}Query $query): {% if resources.enabled %}{{ resources.collection_class|default(naming.entity_studly|default('Sample') ~ 'Collection') }}{% else %}JsonResponse{% endif %}
+    {
+{% if resources.enabled and resources.includes is not empty %}
+        $result = $query->handle($request, [
+            'with' => {{ resources.includes_literal }},
+        ]);
+{% else %}
+        $result = $query->handle($request);
+{% endif %}
+
+{% if resources.enabled %}
+        $collection = {{ resources.collection_class|default(naming.entity_studly|default('Sample') ~ 'Collection') }}::make($result);
+{% if resources.preserve_query|default(true) %}
+        $collection->preserveQuery();
+{% endif %}
+
+        return $collection;
+{% else %}
+        return response()->json($this->formatPaginatedResponse($result));
+{% endif %}
+    }
+
+    /**
+     * @return JsonResponse
+     */
+    public function store({% if form_requests.enabled %}{{ form_requests.store.class|default('Request') }} $request{% else %}Request $request{% endif %}, Create{{ naming.entity_studly|default('Sample') }}Command $command): JsonResponse
+    {
+{% if form_requests.enabled %}
+        $data = $request->validated();
+{% else %}
+        $data = $request->all();
+{% endif %}
+
+        $resource = $command->handle($data);
+
+{% if resources.enabled %}
+{% if resources.includes is not empty %}
+        $resource->load({{ resources.includes_literal }});
+{% endif %}
+        $response = {{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}::make($resource)
+            ->response()
+            ->setStatusCode(201);
+{% else %}
+        $response = response()->json($resource, 201);
+{% endif %}
+
+{% if optimistic_locking.enabled %}
+        return $this->respondWithResourceVersion($response, $resource);
+{% else %}
+        return $response;
+{% endif %}
+    }
+
+    /**
+     * @return {% if optimistic_locking.enabled %}JsonResponse{% else %}{% if resources.enabled %}{{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}{% else %}JsonResponse{% endif %}{% endif %}
+     */
+    public function show({{ model.identifier.php_type|default('int|string') }} $id, Show{{ naming.entity_studly|default('Sample') }}Query $query): {% if optimistic_locking.enabled %}JsonResponse{% else %}{% if resources.enabled %}{{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}{% else %}JsonResponse{% endif %}{% endif %}
+    {
+{% if resources.enabled and resources.includes is not empty %}
+        $resource = $query->handle($id, {{ resources.includes_literal }});
+{% else %}
+        $resource = $query->handle($id);
+{% endif %}
+
+{% if optimistic_locking.enabled %}
+{% if resources.enabled %}
+        $response = {{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}::make($resource)->response();
+{% else %}
+        $response = response()->json($resource);
+{% endif %}
+
+        return $this->respondWithResourceVersion($response, $resource);
+{% else %}
+{% if resources.enabled %}
+        return {{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}::make($resource);
+{% else %}
+        return response()->json($resource);
+{% endif %}
+{% endif %}
+    }
+
+    /**
+     * @return {% if optimistic_locking.enabled %}JsonResponse{% else %}{% if resources.enabled %}{{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}{% else %}JsonResponse{% endif %}{% endif %}
+     */
+    public function update({{ model.identifier.php_type|default('int|string') }} $id, {% if form_requests.enabled %}{{ form_requests.update.class|default('Request') }} $request{% else %}Request $request{% endif %}, Show{{ naming.entity_studly|default('Sample') }}Query $query, Update{{ naming.entity_studly|default('Sample') }}Command $command): {% if optimistic_locking.enabled %}JsonResponse{% else %}{% if resources.enabled %}{{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}{% else %}JsonResponse{% endif %}{% endif %}
+    {
+        $resource = $query->handle($id);
+
+{% if optimistic_locking.enabled %}
+        $this->ensureCurrentVersion($request, $resource);
+{% endif %}
+
+{% if form_requests.enabled %}
+        $data = $request->validated();
+{% else %}
+        $data = $request->all();
+{% endif %}
+
+        $updated = $command->handle($resource, $data);
+
+{% if resources.enabled %}
+{% if resources.includes is not empty %}
+        $updated->load({{ resources.includes_literal }});
+{% endif %}
+{% if optimistic_locking.enabled %}
+        $response = {{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}::make($updated)->response();
+
+        return $this->respondWithResourceVersion($response, $updated);
+{% else %}
+        return {{ resources.resource_class|default(naming.entity_studly|default('Sample') ~ 'Resource') }}::make($updated);
+{% endif %}
+{% else %}
+        $response = response()->json($updated);
+
+{% if optimistic_locking.enabled %}
+        return $this->respondWithResourceVersion($response, $updated);
+{% else %}
+        return $response;
+{% endif %}
+{% endif %}
+    }
+
+    public function destroy({{ model.identifier.php_type|default('int|string') }} $id, {% if optimistic_locking.enabled %}Request $request, {% endif %}Show{{ naming.entity_studly|default('Sample') }}Query $query, Delete{{ naming.entity_studly|default('Sample') }}Command $command): JsonResponse
+    {
+        $resource = $query->handle($id);
+
+{% if optimistic_locking.enabled %}
+        $this->ensureCurrentVersion($request, $resource);
+{% endif %}
+
+        $command->handle($resource);
+
+        return response()->json(null, 204);
+    }
+
+}

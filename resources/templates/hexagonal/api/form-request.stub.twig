@@ -1,0 +1,35 @@
+{#
+  Stub: Hexagonal API FormRequest
+  Variables esperadas:
+    - request.namespace
+    - request.class
+    - request.authorize
+    - request.rules (array de pares field_code / parts_code)
+    - request.has_rules
+#}
+<?php
+
+namespace {{ request.namespace|default('App\\Http\\Requests\\Api') }};
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class {{ request.class|default('SampleRequest') }} extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return {{ request.authorize ? 'true' : 'false' }};
+    }
+
+    public function rules(): array
+    {
+{% if request.has_rules %}
+        return [
+{% for rule in request.rules %}
+            {{ rule.field_code|raw }} => [{{ rule.parts_code|raw }}],
+{% endfor %}
+        ];
+{% else %}
+        return [];
+{% endif %}
+    }
+}

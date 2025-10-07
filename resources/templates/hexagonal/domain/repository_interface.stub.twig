@@ -1,0 +1,34 @@
+{#
+  Stub: Hexagonal domain repository interface
+  Variables sugeridas:
+    - entity
+    - namespaces.domain_repositories
+#}
+<?php
+
+namespace {{ namespaces.domain_repositories|default('App\Domain\Repositories') }};
+
+use {{ namespaces.domain_models|default('App\Domain\Models') }}\{{ naming.entity_studly|default('Sample') }};
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
+
+interface {{ entity.name|default('Sample')|studly }}RepositoryInterface
+{
+    /**
+     * @return LengthAwarePaginator<{{ naming.entity_studly|default('Sample') }}>
+     */
+    public function paginate(array $filters = [], int $perPage = 15, array $options = []): LengthAwarePaginator;
+
+    /**
+     * @return Collection<int, {{ naming.entity_studly|default('Sample') }}>
+     */
+    public function search(string $query, array $filters = [], int $limit = 50): Collection;
+
+    public function findById({{ model.identifier.php_type|default('int|string') }} $id, array $with = []): ?{{ naming.entity_studly|default('Sample') }};
+
+    public function create(array $data): {{ naming.entity_studly|default('Sample') }};
+
+    public function update({{ naming.entity_studly|default('Sample') }} ${{ naming.entity_variable|default('sample') }}, array $data): {{ naming.entity_studly|default('Sample') }};
+
+    public function delete({{ naming.entity_studly|default('Sample') }} ${{ naming.entity_variable|default('sample') }}): void;
+}

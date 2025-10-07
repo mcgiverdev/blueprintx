@@ -1,0 +1,28 @@
+<?php
+
+namespace App\Domain\Hr\Repositories;
+
+use App\Domain\Hr\Models\Employee;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
+
+interface EmployeeRepositoryInterface
+{
+    /**
+     * @return LengthAwarePaginator<Employee>
+     */
+    public function paginate(array $filters = [], int $perPage = 15, array $options = []): LengthAwarePaginator;
+
+    /**
+     * @return Collection<int, Employee>
+     */
+    public function search(string $query, array $filters = [], int $limit = 50): Collection;
+
+    public function findById(string $id, array $with = []): ?Employee;
+
+    public function create(array $data): Employee;
+
+    public function update(Employee $employee, array $data): Employee;
+
+    public function delete(Employee $employee): void;
+}

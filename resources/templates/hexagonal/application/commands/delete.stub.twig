@@ -1,0 +1,28 @@
+{#
+  Stub: Application command to delete an entity
+  Variables:
+    - namespaces.commands
+    - domain.repositories
+    - domain.models
+    - naming.entity_studly
+    - naming.entity_variable
+#}
+<?php
+
+namespace {{ namespaces.commands|default('App\\Application\\Commands') }};
+
+use {{ domain.repositories|default('App\\Domain\\Repositories') }}\{{ naming.entity_studly|default('Sample') }}RepositoryInterface;
+use {{ domain.models|default('App\\Domain\\Models') }}\{{ naming.entity_studly|default('Sample') }};
+
+class Delete{{ naming.entity_studly|default('Sample') }}Command
+{
+    public function __construct(private readonly {{ naming.entity_studly|default('Sample') }}RepositoryInterface $repository)
+    {
+    }
+
+    public function handle({{ naming.entity_studly|default('Sample') }} ${{ naming.entity_variable|default('sample') }}): void
+    {
+        // TODO: coordinar eventos u otras acciones antes de eliminar
+        $this->repository->delete(${{ naming.entity_variable|default('sample') }});
+    }
+}

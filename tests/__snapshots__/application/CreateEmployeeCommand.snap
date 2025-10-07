@@ -1,0 +1,22 @@
+<?php
+
+namespace App\Application\Hr\Commands;
+
+use App\Domain\Hr\Repositories\EmployeeRepositoryInterface;
+use App\Domain\Hr\Models\Employee;
+
+class CreateEmployeeCommand
+{
+    public function __construct(private readonly EmployeeRepositoryInterface $repository)
+    {
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function handle(array $payload): Employee
+    {
+        // TODO: aplicar reglas adicionales antes de crear la entidad
+        return $this->repository->create($payload);
+    }
+}

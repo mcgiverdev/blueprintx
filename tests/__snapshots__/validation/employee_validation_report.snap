@@ -1,0 +1,52 @@
+{
+    "errors": [
+        {
+            "code": "fields.duplicate",
+            "message": "Campo duplicado: email",
+            "path": "fields[2].name"
+        },
+        {
+            "code": "relations.missing_field",
+            "message": "La relaci\u00f3n Department requiere el campo \"department_id\" en fields.",
+            "path": "relations[0].field"
+        },
+        {
+            "code": "endpoints.duplicate",
+            "message": "Endpoint duplicado para \"crud\".",
+            "path": "api.endpoints[1]"
+        },
+        {
+            "code": "endpoints.patch.missing_field",
+            "message": "Los endpoints patch requieren especificar \"field\".",
+            "path": "api.endpoints[2].field"
+        },
+        {
+            "code": "endpoints.stats.missing_by",
+            "message": "Los endpoints stats deben definir \"by\".",
+            "path": "api.endpoints[4].by"
+        },
+        {
+            "code": "options.versioned.missing_field",
+            "message": "La opci\u00f3n versioned requiere un campo \"version\" en fields.",
+            "path": null
+        }
+    ],
+    "warnings": [
+        {
+            "code": "naming.mismatch",
+            "message": "El nombre de la tabla \"employee_records\" no coincide con la convenci\u00f3n sugerida \"employees\".",
+            "path": null
+        },
+        {
+            "code": "endpoints.search.unknown_field",
+            "message": "El endpoint search referencia el campo desconocido \"ghost_field\".",
+            "path": "api.endpoints[3].fields"
+        },
+        {
+            "code": "docs.invalid_example",
+            "message": "El ejemplo \"create\" referencia el campo desconocido \"ghost_field\".",
+            "path": "docs.examples.create.ghost_field"
+        }
+    ],
+    "valid": false
+}

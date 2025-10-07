@@ -1,0 +1,36 @@
+{#
+  Stub: Application query to fetch a single entity
+  Variables:
+    - namespaces.queries
+    - domain.repositories
+    - domain.models
+    - naming.entity_studly
+#}
+<?php
+
+namespace {{ namespaces.queries|default('App\\Application\\Queries') }};
+
+use {{ domain.repositories|default('App\\Domain\\Repositories') }}\{{ naming.entity_studly|default('Sample') }}RepositoryInterface;
+use {{ domain.models|default('App\\Domain\\Models') }}\{{ naming.entity_studly|default('Sample') }};
+use {{ domain.shared_exceptions|default('App\\Domain\\Shared\\Exceptions') }}\DomainNotFoundException;
+
+class Show{{ naming.entity_studly|default('Sample') }}Query
+{
+    public function __construct(private readonly {{ naming.entity_studly|default('Sample') }}RepositoryInterface $repository)
+    {
+    }
+
+    /**
+     * @param array<int, string> $with
+     */
+  public function handle(int|string $id, array $with = []): {{ naming.entity_studly|default('Sample') }}
+    {
+    $resource = $this->repository->findById($id, $with);
+
+    if ($resource === null) {
+      throw new DomainNotFoundException(sprintf('El %s solicitado no existe.', {{ "'" ~ naming.entity_variable|default('sample') ~ "'" }}));
+    }
+
+    return $resource;
+    }
+}

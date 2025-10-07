@@ -1,0 +1,44 @@
+{#
+  Stub: Domain validation exception
+  Variables:
+    - namespaces.shared_exceptions
+#}
+<?php
+
+namespace {{ namespaces.shared_exceptions|default('App\\Domain\\Shared\\Exceptions') }};
+
+use Throwable;
+
+class DomainValidationException extends DomainException
+{
+    /**
+     * @param array<string, array<int, string>|string> $errors
+     */
+    public function __construct(array $errors, string $message = '', ?string $errorCode = null, ?int $statusCode = null, ?Throwable $previous = null)
+    {
+        parent::__construct($message, $errorCode, $statusCode, $errors, $previous);
+    }
+
+    public static function defaultCode(): string
+    {
+        return 'domain.validation_failed';
+    }
+
+    public static function defaultMessage(): string
+    {
+        return 'Los datos proporcionados no son válidos.';
+    }
+
+    public static function defaultStatus(): int
+    {
+        return 422;
+    }
+
+    /**
+     * @return array<string, array<int, string>|string>
+     */
+    public function errors(): array
+    {
+        return $this->details();
+    }
+}

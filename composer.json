@@ -1,0 +1,66 @@
+{
+    "name": "mcgiverdev/blueprintx",
+    "description": "BlueprintX CLI - generador de código modular multi-arquitectura para Laravel",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "blueprint",
+        "generator",
+        "hexagonal",
+        "ddd"
+    ],
+    "homepage": "https://github.com/mcgiverdev/blueprintx",
+    "support": {
+        "issues": "https://github.com/mcgiverdev/blueprintx/issues",
+        "source": "https://github.com/mcgiverdev/blueprintx"
+    },
+    "authors": [
+        {
+            "name": "McGiverDev",
+            "email": "dev@mcgiverdev.io"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "cebe/php-openapi": "^1.6",
+        "illuminate/console": "^11.0 || ^12.0",
+        "illuminate/support": "^11.0 || ^12.0",
+        "justinrainbow/json-schema": "^5.2",
+        "symfony/yaml": "^6.4 || ^7.0",
+        "twig/twig": "^3.8"
+    },
+    "require-dev": {
+        "illuminate/container": "^11.0",
+        "orchestra/testbench": "^9.15 || ^10.0",
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "BlueprintX\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "BlueprintX\\Tests\\": "tests/"
+        },
+        "exclude-from-classmap": [
+            "tests/__snapshots__/"
+        ]
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "BlueprintX\\BlueprintXServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

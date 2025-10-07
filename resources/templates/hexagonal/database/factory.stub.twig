@@ -1,0 +1,37 @@
+{#
+  Stub: Hexagonal model factory
+  Variables disponibles:
+    - factory.namespace
+    - factory.class_name
+    - factory.model_fqcn
+    - factory.properties
+    - factory.imports
+    - factory.needs_str
+#}
+<?php
+
+namespace {{ factory.namespace }};
+
+use Illuminate\Database\Eloquent\Factories\Factory;
+{% if factory.needs_str %}use Illuminate\Support\Str;
+{% endif %}{% for import in factory.imports %}use {{ import }};
+{% endfor %}
+
+/**
+ * @extends Factory<{{ factory.model_doc_type }}>
+ */
+class {{ factory.class_name }} extends Factory
+{
+    protected $model = {{ factory.model_class }}::class;
+
+    public function definition(): array
+    {
+        return [
+{% for property in factory.properties %}
+            '{{ property.name }}' => {% if property.is_expression %}{{ property.value }}{% else %}{{ property.value }}{% endif %},
+{% else %}
+            // TODO: definir atributos para el modelo
+{% endfor %}
+        ];
+    }
+}

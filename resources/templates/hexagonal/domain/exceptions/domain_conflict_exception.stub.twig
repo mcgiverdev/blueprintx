@@ -1,0 +1,26 @@
+{#
+  Stub: Domain conflict exception
+  Variables:
+    - namespaces.shared_exceptions
+#}
+<?php
+
+namespace {{ namespaces.shared_exceptions|default('App\\Domain\\Shared\\Exceptions') }};
+
+class DomainConflictException extends DomainException
+{
+    public static function defaultCode(): string
+    {
+        return 'domain.conflict';
+    }
+
+    public static function defaultMessage(): string
+    {
+        return 'No se pudo completar la operación por un conflicto de dominio.';
+    }
+
+    public static function defaultStatus(): int
+    {
+        return 409;
+    }
+}

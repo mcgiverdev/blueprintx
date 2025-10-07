@@ -1,0 +1,69 @@
+{#
+  Stub: Hexagonal domain model
+  Variables sugeridas:
+    - entity
+    - namespaces.domain_models
+    - module
+#}
+<?php
+
+namespace {{ namespaces.domain_models|default('App\Domain\Models') }};
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+{% set modelMeta = model|default({}) %}
+{% set relationReturnTypes = modelMeta.relation_return_types|default([]) %}
+{% set relationImports = modelMeta.relation_imports|default([]) %}
+{% set softDeletes = modelMeta.soft_deletes|default(false) %}
+{% for returnType in relationReturnTypes %}
+use Illuminate\Database\Eloquent\Relations\{{ returnType }};
+{% endfor %}
+{% if softDeletes %}
+use Illuminate\Database\Eloquent\SoftDeletes;
+{% endif %}
+{% for import in relationImports %}
+use {{ import }};
+{% endfor %}
+
+class {{ entity.name|default('Sample')|studly }} extends Model
+{
+    use HasFactory;
+{% if softDeletes %}
+    use SoftDeletes;
+{% endif %}
+
+    protected $table = '{{ naming.entity_table|default("samples") }}';
+
+    /**
+     * @var array<int, string>
+     */
+    protected $fillable = [
+{% for field in modelMeta.fillable|default([]) %}
+        '{{ field }}',
+{% else %}
+        // TODO: enumerar atributos asignables en masa
+{% endfor %}
+    ];
+
+    /**
+     * @var array<string, string>
+     */
+    protected $casts = [
+{% for name, cast in modelMeta.casts|default({}) %}
+        '{{ name }}' => '{{ cast }}',
+{% else %}
+        // TODO: definir casts nativos
+{% endfor %}
+    ];
+
+{% if not (modelMeta.timestamps|default(true)) %}
+    public $timestamps = false;
+
+{% endif %}
+{% for relation in modelMeta.relations|default([]) %}
+    public function {{ relation.method }}(): {{ relation.return_type }}
+    {
+        return $this->{{ relation.eloquent_method }}({{ relation.related_class }}::class{% if relation.foreign_key %}, '{{ relation.foreign_key }}'{% endif %});
+    }
+{% endfor -%}
+}

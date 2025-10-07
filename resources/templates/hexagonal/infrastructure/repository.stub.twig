@@ -1,0 +1,117 @@
+{#
+  Stub: Hexagonal infrastructure repository (Eloquent implementation)
+  Variables sugeridas:
+    - namespaces.repositories
+    - domain.repositories
+    - domain.models
+    - application.filters
+    - naming.entity_studly
+    - naming.entity_variable
+#}
+<?php
+
+namespace {{ namespaces.repositories|default('App\Infrastructure\Persistence\Eloquent\Repositories') }};
+
+use {{ domain.models|default('App\Domain\Models') }}\{{ naming.entity_studly|default('Sample') }};
+use {{ domain.repositories|default('App\Domain\Repositories') }}\{{ naming.entity_studly|default('Sample') }}RepositoryInterface;
+use {{ application.filters|default('App\Application\Queries\Filters') }}\{{ naming.entity_studly|default('Sample') }}Filter;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+
+class Eloquent{{ naming.entity_studly|default('Sample') }}Repository implements {{ naming.entity_studly|default('Sample') }}RepositoryInterface
+{
+    public function __construct(private readonly {{ naming.entity_studly|default('Sample') }}Filter $filter)
+    {
+    }
+
+    /**
+     * @return LengthAwarePaginator<{{ naming.entity_studly|default('Sample') }}>
+     */
+    public function paginate(array $filters = [], int $perPage = 15, array $options = []): LengthAwarePaginator
+    {
+        $builder = {{ naming.entity_studly|default('Sample') }}::query();
+
+        /** @var Request|null $request */
+        $request = $filters['request'] ?? null;
+
+        if (isset($filters['with']) && is_array($filters['with'])) {
+            $builder = $this->applyIncludes($builder, $filters['with']);
+        }
+
+        if ($request instanceof Request) {
+            $builder = $this->applyFilter($builder, $request);
+        }
+
+        return $builder->paginate(
+            $perPage,
+            $options['columns'] ?? ['*'],
+            'page',
+            $request?->integer('page', 1) ?? 1
+        );
+    }
+
+    /**
+     * @return Collection<int, {{ naming.entity_studly|default('Sample') }}>
+     */
+    public function search(string $query, array $filters = [], int $limit = 50): Collection
+    {
+        $builder = $this->filter->applySearch({{ naming.entity_studly|default('Sample') }}::query(), $query);
+
+        if (isset($filters['with']) && is_array($filters['with'])) {
+            $builder = $this->applyIncludes($builder, $filters['with']);
+        }
+
+        if (isset($filters['request']) && $filters['request'] instanceof Request) {
+            $builder = $this->applyFilter($builder, $filters['request']);
+        }
+
+        return $builder->limit($limit)->get();
+    }
+
+    public function findById({{ model.identifier.php_type|default('int|string') }} $id, array $with = []): ?{{ naming.entity_studly|default('Sample') }}
+    {
+        return {{ naming.entity_studly|default('Sample') }}::query()
+            ->when($with !== [], fn (Builder $builder) => $builder->with($with))
+            ->find($id);
+    }
+
+    public function create(array $data): {{ naming.entity_studly|default('Sample') }}
+    {
+        /** @var {{ naming.entity_studly|default('Sample') }} $model */
+        $model = {{ naming.entity_studly|default('Sample') }}::create($data);
+
+        return $model->fresh();
+    }
+
+    public function update({{ naming.entity_studly|default('Sample') }} ${{ naming.entity_variable|default('sample') }}, array $data): {{ naming.entity_studly|default('Sample') }}
+    {
+        ${{ naming.entity_variable|default('sample') }}->fill($data);
+        ${{ naming.entity_variable|default('sample') }}->save();
+
+        return ${{ naming.entity_variable|default('sample') }}->fresh();
+    }
+
+    public function delete({{ naming.entity_studly|default('Sample') }} ${{ naming.entity_variable|default('sample') }}): void
+    {
+        ${{ naming.entity_variable|default('sample') }}->delete();
+    }
+
+    protected function applyFilter(Builder $builder, Request $request): Builder
+    {
+        return $this->filter->applyTo($builder, $request);
+    }
+
+    /**
+     * @param array<int, string> $with
+     */
+    protected function applyIncludes(Builder $builder, array $with): Builder
+    {
+        if ($with === []) {
+            return $builder;
+        }
+
+        return $builder->with($with);
+    }
+}
