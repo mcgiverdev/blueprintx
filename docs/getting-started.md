@@ -25,6 +25,14 @@ php artisan vendor:publish --provider="BlueprintX\BlueprintXServiceProvider" --t
 
 Esto creará `config/blueprintx.php` con rutas y banderas de características (OpenAPI, optimistc locking, traits de controladores, etc.).
 
+Si planeas sobreescribir plantillas, publica también los recursos Twig:
+
+```bash
+php artisan vendor:publish --provider="BlueprintX\BlueprintXServiceProvider" --tag=blueprintx-templates
+```
+
+Los archivos quedarán en `resources/vendor/blueprintx/templates` y tendrán prioridad sobre los que trae el paquete.
+
 ## Configuración mínima
 
 Asegúrate de que `config/blueprintx.paths.blueprints` apunte al directorio donde guardarás los YAML. Por defecto es `base_path('blueprints')`.
@@ -69,6 +77,14 @@ Antes de generar código ejecuta la validación para detectar errores de sintaxi
 php artisan blueprintx:validate
 ```
 
+Agrega `--json` cuando necesites integrar los resultados en pipelines automáticos.
+
+Para consultar el inventario de blueprints disponible usa:
+
+```bash
+php artisan blueprintx:list --module=hr
+```
+
 ## Generación
 
 Genera artefactos para todos los blueprints o filtrando por módulo/entidad:
@@ -86,8 +102,11 @@ php artisan blueprintx:generate --force --with-openapi
 
 La salida destacará archivos nuevos, sobrescritos y warnings. Si estás probando, ejecuta `--dry-run` para previsualizar sin escribir en disco.
 
+Cuando `features.openapi.enabled` esté activo en la configuración, el comando generará y validará automáticamente el documento OpenAPI (puedes forzar esta acción con `--with-openapi` o omitirla con `--without-openapi`).
+
 ## Próximos pasos
 
 - Revisa la [referencia de blueprints](reference/blueprint-format.html) para aprovechar todas las secciones.
 - Consulta la [referencia de comandos](reference/cli.html) para automatizar flujos de validación y despliegue.
+- Ajusta la [configuración](reference/configuration.html) para adaptar rutas de salida, namespaces y generación de documentación.
 - Sigue la [guía de trabajo recomendada](guides/workflow.html) para integrar BlueprintX en tus pipelines.

@@ -4,141 +4,140 @@ title: Lenguaje de blueprints
 nav_order: 1
 parent: Referencia
 ---
-
-## Estructura general
-
-Cada archivo YAML describe una entidad y los artefactos que deben generarse.
+BlueprintX utiliza archivos YAML para describir entidades, sus relaciones y las capas que deben generarse. A continuación se resume la estructura exacta validada por `resources/schema/blueprint.schema.json`.
 
 ```yaml
-entity: Employee        # Nombre de la entidad en PascalCase
-module: hr              # Agrupa blueprints por dominio
-architecture: hexagonal # Opcional. Usa el valor por defecto si se omite
-options:                # Configuración transversal
-authorize: true
-fields:                 # Campos y validaciones
-  first_name:
+entity: Employee
+module: hr
+table: employees
+architecture: hexagonal
+fields:
+  - name: first_name
     type: string
     rules: required|max:120
-relations:              # Relaciones Eloquent
-  belongsTo:
-    department:
-      relation: App\Domain\Hr\Models\Department
-      foreign_key: department_id
-api:                     # API REST
-  resource: /hr/employees
+  - name: email
+    type: string
+    rules: required|email|unique:employees,email
+relations:
+  - type: belongsTo
+    target: Department
+    field: department_id
+    rules: required|exists:departments,id
+options:
+  timestamps: true
+  softDeletes: true
+api:
+  base_path: /hr/employees
+  middleware: [auth:sanctum]
   endpoints:
-    index: {}
-    toggle-active:
-      method: patch
-      action: ToggleActive
-search:                  # Búsquedas declarativas
-  filters:
-    - name
-errors:                  # Errores de dominio y códigos HTTP
+    - type: crud
+    - type: patch
+      name: toggle-active
+      field: active
+  resources:
+    includes:
+      - department
+docs:
+  description: Operaciones CRUD para empleados
+  tags: [hr]
+errors:
   employee_inactive:
+    message: El empleado está inactivo.
     code: domain.employee.inactive
     status: 409
-    message: El empleado está inactivo.
+metadata:
+  owner: Team HR
+  version: 1.0
 ```
 
-## Metadatos
+## Cabecera
 
-| Clave        | Tipo      | Requerido | Descripción |
-|--------------|-----------|-----------|-------------|
-| `entity`     | string    | Sí        | Nombre canon de la entidad generada. |
-| `module`     | string    | Sí        | Módulo lógico (carpeta dentro de `blueprints/`). |
-| `architecture` | string | No        | Forza un driver registrado en `config/blueprintx.architectures`. |
+| Clave | Obligatorio | Descripción |
+|-------|-------------|-------------|
+| `entity` | Sí | Nombre en PascalCase de la entidad. |
+| `module` | Sí | Directorio lógico dentro de `blueprints/` (lowercase, puede incluir submódulos con `/`). |
+| `table` | Sí | Nombre de la tabla a utilizar en migraciones y modelos. |
+| `architecture` | No | Sobrescribe el driver declarado en `config/blueprintx.architectures`. |
 
-## `options`
+BlueprintX calcula la ruta del archivo a partir de `module` y `entity`, pero el campo `path` también puede rellenarse al generar bluprints programáticamente.
 
-Configura banderas globales para la entidad.
+## Campos (`fields`)
+
+La sección `fields` es un arreglo de objetos con esta forma:
+
+| Clave | Obligatorio | Descripción |
+|-------|-------------|-------------|
+| `name` | Sí | Nombre snake_case. |
+| `type` | Sí | Uno de: `string`, `text`, `integer`, `bigInteger`, `decimal`, `float`, `boolean`, `date`, `datetime`, `json`, `uuid`. |
+| `rules` | No | Reglas de validación de Laravel separadas por `\|`. |
+| `default` | No | Valor por defecto aplicado en migración y modelo. |
+| `precision`, `scale` | No | Requeridos cuando `type` es `decimal`. |
+| `nullable` | No | Si es `true`, marca la columna como nullable y ajusta las reglas. |
+
+> Consejo: usa `string` para columnas cortas y `text` para descripciones largas.
+
+## Relaciones (`relations`)
+
+`relations` es un arreglo donde cada objeto describe una relación Eloquent:
+
+| Clave | Obligatorio | Descripción |
+|-------|-------------|-------------|
+| `type` | Sí | `belongsTo`, `hasOne`, `hasMany` o `belongsToMany`. |
+| `target` | Sí | Entidad destino en PascalCase. |
+| `field` | Sí | Columna o pivot utilizada. |
+| `rules` | No | Reglas adicionales aplicadas al campo en formularios. |
+
+BlueprintX utiliza estos datos para crear métodos en los modelos, llaves foráneas en migraciones y ayudas en recursos API.
+
+## Opciones (`options`)
 
 | Clave | Tipo | Predeterminado | Descripción |
 |-------|------|----------------|-------------|
-| `timestamps` | bool | `true` | Añade timestamps a modelos y migraciones. |
-| `softDeletes` | bool | `false` | Activa `SoftDeletes`. |
-| `authorize` | bool | `true` | Inserta llamadas `authorize` en FormRequests. |
-| `optimistic_locking` | objeto | `null` | Configura bloqueo optimista (`strategy`, `header`, `response_header`). |
-| `includes` | array | `[]` | Recursos relacionados a incluir en respuestas API. |
+| `timestamps` | bool | `true` | Incluye columnas `created_at` y `updated_at`. |
+| `softDeletes` | bool | `false` | Agrega `deleted_at` y el trait `SoftDeletes`. |
+| `audited` | bool | `false` | Habilita ganchos para auditorías (si la arquitectura lo soporta). |
+| `versioned` | bool | `false` | Indica que la entidad mantiene versiones (útil con bloqueo optimista). |
 
-## `fields`
+## API (`api`)
 
-Cada campo admite:
+Controla la generación de controladores, rutas implícitas y `JsonResource`.
 
-| Clave     | Tipo   | Obligatorio | Notas |
-|-----------|--------|-------------|-------|
-| `type`    | string | Sí          | Tipos soportados: `string`, `integer`, `decimal`, `boolean`, `uuid`, `date`, `datetime`, `json`. |
-| `rules`   | string | Sí          | Reglas de validación de Laravel separadas por `\|`. |
-| `default` | mixed  | No          | Valor por defecto. |
-| `precision`, `scale` | int | No          | Requeridos cuando el tipo es `decimal`. |
-| `nullable` | bool  | No          | Marca el campo como opcional en migraciones y reglas. |
+- `base_path`: prefijo REST (ej. `/crm/contacts`).
+- `middleware`: listado de middleware que se inyectará en el controlador.
+- `endpoints`: arreglo de definiciones con la siguiente forma:
 
-## `relations`
+| Propiedad | Descripción |
+|-----------|-------------|
+| `type` | `crud`, `patch`, `search`, `stats`, `restore`, `bulk` o `custom`. |
+| `name` | Identificador del endpoint (para `patch`, `custom` o adicionales). |
+| `method` | Método HTTP a usar (por defecto se infiere). |
+| `path` | Segmento adicional en la ruta cuando necesitas algo distinto a lo autogenerado. |
+| `field` | Campo afectado (requerido en `patch`). |
+| `fields` | Lista de campos a exponer (útil en `search`). |
+| `by` | Campo de agregación para `stats`. |
 
-Las relaciones se agrupan por tipo. BlueprintX soporta los siguientes bloques:
+Los recursos pueden incluir relaciones mediante `api.resources.includes`, aceptando strings simples (`department`) o objetos con `relation`, `alias` y `resource` para mapear a clases personalizadas.
 
-| Bloque      | Descripción |
-|-------------|-------------|
-| `belongsTo` | Define relaciones `belongsTo`. |
-| `hasOne`    | Crea relaciones `hasOne`. |
-| `hasMany`   | Crea relaciones `hasMany`. |
-| `morphOne`, `morphMany`, `morphToMany` | Relaciones polimórficas. |
+## Documentación (`docs`)
 
-Cada entrada requiere `relation` (clase destino) y puede definir `foreign_key`, `local_key`, `rules` y banderas `nullable`.
+Disponible cuando `features.openapi.enabled = true`:
 
-## `api`
+- `description`: texto largo para OpenAPI.
+- `tags`: arreglo de etiquetas.
+- `examples`: bloque opcional con ejemplos `create`, `update` o `patch` que aparecerán en los request bodies.
 
-Controla los artefactos HTTP.
+## Errores (`errors`)
 
-| Clave | Tipo | Descripción |
-|-------|------|-------------|
-| `resource` | string | Prefijo REST (ej. `/hr/employees`). |
-| `controller` | string | Sobrescribe el nombre del controlador. |
-| `policies` | objeto | Asigna métodos de política personalizados. |
-| `endpoints` | object | Declara endpoints CRUD y extendidos. |
-| `resources.includes` | array | Relaciones a cargar en respuestas. |
+Define códigos de error de dominio que se propagarán a los controladores, pruebas y documentación.
 
-### Endpoints soportados
+- Usa una clave por error (`employee_inactive`).
+- El valor puede ser una cadena rápida o un objeto con `message`, `code`, `status`, `extends` y `description`.
+- `extends` permite reutilizar errores declarados en otros blueprints.
 
-- `index`, `store`, `show`, `update`, `destroy` (CRUD básico).
-- `patch` personalizados con `method`, `action`, `field`.
-- `search` con `filters` y `order`.
-- `stats` con `by` para agregaciones simples.
+## Metadatos (`metadata`)
 
-## `search`
+Campo libre para adjuntar información adicional que tus pipelines personalizados puedan leer (dueño, etiquetas, versión, etc.). No impacta la generación estándar.
 
-Define filtros y ordenamientos reutilizados por el generador de consultas.
+## Validación
 
-```yaml
-search:
-  filters:
-    - name
-    - department_id
-  sort:
-    - field: created_at
-      direction: desc
-```
-
-## `errors`
-
-Describe errores de dominio que BlueprintX reflejará en respuestas JSON y excepciones.
-
-| Clave | Tipo | Descripción |
-|-------|------|-------------|
-| `code` | string | Identificador estable (ej. `domain.employee.inactive`). |
-| `status` | int | Código HTTP asociado. |
-| `message` | string | Mensaje traducible. |
-
-## `docs`
-
-Si la característica de documentación está habilitada, la sección `docs` permite personalizar metadatos y ejemplos en OpenAPI.
-
-```yaml
-docs:
-  summary: Gestión de empleados
-  description: Operaciones CRUD para empleados
-  tags:
-    - hr
-```
-
-> Para revisar las validaciones completas consulta el JSON Schema en `packages/blueprintx/resources/schema/blueprint.schema.json`.
+La combinación de los validadores de esquema y semánticos asegura que tus archivos cumplan con la estructura anterior. Ejecuta `php artisan blueprintx:validate` para obtener mensajes detallados por archivo. El JSON Schema se encuentra en `packages/blueprintx/resources/schema/blueprint.schema.json`.

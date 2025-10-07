@@ -9,3 +9,4 @@ Resumen de los recursos de referencia disponibles para trabajar con BlueprintX.
 
 - [Lenguaje de blueprints](blueprint-format.html)
 - [Comandos CLI](cli.html)
+- [Configuración](configuration.html)

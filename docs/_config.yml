@@ -2,3 +2,6 @@ title: BlueprintX
 show_downloads: false
 theme: minima
 markdown: kramdown
+description: "Documentación oficial del generador BlueprintX para Laravel"
+url: https://mcgiverdev.github.io
+baseurl: /blueprintx
