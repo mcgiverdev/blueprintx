@@ -283,6 +283,7 @@ class DomainLayerGenerator implements LayerGenerator
         $relationReturnTypes = [];
         $relationImports = [];
         $relations = [];
+        $relationMethodNames = [];
         $selfClass = Str::studly($blueprint->entity());
         $domainModelsNamespace = $namespaces['domain_models'];
 
@@ -295,12 +296,7 @@ class DomainLayerGenerator implements LayerGenerator
             }
 
             $relatedClass = Str::studly($target);
-            $methodName = match ($type) {
-                'belongsto' => Str::camel($target),
-                'hasmany', 'belongstomany' => Str::camel(Str::plural($target)),
-                'hasone' => Str::camel($target),
-                default => null,
-            };
+            $methodBaseName = $this->deriveRelationMethodBaseName($type, $relation, $target);
 
             $eloquentMethod = match ($type) {
                 'belongsto' => 'belongsTo',
@@ -318,9 +314,12 @@ class DomainLayerGenerator implements LayerGenerator
                 default => null,
             };
 
-            if ($methodName === null || $eloquentMethod === null || $returnType === null) {
+            if ($methodBaseName === null || $eloquentMethod === null || $returnType === null) {
                 continue;
             }
+
+            $methodName = $this->makeUniqueRelationMethodName($methodBaseName, $relationMethodNames);
+            $relationMethodNames[] = $methodName;
 
             if (! in_array($returnType, $relationReturnTypes, true)) {
                 $relationReturnTypes[] = $returnType;
@@ -354,6 +353,60 @@ class DomainLayerGenerator implements LayerGenerator
                 'php_type' => $identifierPhpType,
             ],
         ];
+    }
+
+    private function deriveRelationMethodBaseName(string $type, Relation $relation, string $target): ?string
+    {
+        return match ($type) {
+            'belongsto' => $this->deriveBelongsToMethodName($relation, $target),
+            'hasone' => $this->deriveBelongsToMethodName($relation, $target),
+            'hasmany', 'belongstomany' => Str::camel(Str::plural($target)),
+            default => null,
+        };
+    }
+
+    private function deriveBelongsToMethodName(Relation $relation, string $target): string
+    {
+        $candidate = $this->normalizeRelationField($relation->field);
+
+        if ($candidate !== null) {
+            return Str::camel($candidate);
+        }
+
+        return Str::camel($target);
+    }
+
+    private function normalizeRelationField(?string $field): ?string
+    {
+        if ($field === null || $field === '') {
+            return null;
+        }
+
+        $normalized = preg_replace('/_(id|uuid|ulid|guid)$/', '', $field);
+        $normalized = preg_replace('/_fk$/', '', $normalized ?? '');
+        $normalized = trim((string) $normalized, '_');
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<int, string> $existing
+     */
+    private function makeUniqueRelationMethodName(string $baseName, array $existing): string
+    {
+        $methodName = $baseName;
+        $counter = 1;
+
+        while (in_array($methodName, $existing, true)) {
+            $counter++;
+            $methodName = $baseName . $counter;
+        }
+
+        return $methodName;
     }
 
     /**

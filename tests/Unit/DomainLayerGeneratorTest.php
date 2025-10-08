@@ -130,6 +130,61 @@ class DomainLayerGeneratorTest extends TestCase
         $this->assertSame($this->snapshot('employee_domain_repository_interface.snap'), $files['app/Domain/Hr/Repositories/EmployeeRepositoryInterface.php']);
     }
 
+    public function test_it_generates_unique_method_names_for_multiple_belongs_to_relations(): void
+    {
+        $engine = $this->makeTemplateEngine();
+        $driver = $this->makeHexagonalDriver();
+        $this->registerDriverNamespaces($engine, $driver);
+
+        $generator = new DomainLayerGenerator($engine);
+
+        $blueprint = Blueprint::fromArray([
+            'path' => 'blueprints/crm/account.yaml',
+            'module' => 'crm',
+            'entity' => 'Account',
+            'table' => 'accounts',
+            'architecture' => 'hexagonal',
+            'fields' => [
+                ['name' => 'id', 'type' => 'uuid'],
+                ['name' => 'owner_id', 'type' => 'uuid'],
+                ['name' => 'created_by', 'type' => 'uuid'],
+                ['name' => 'updated_by', 'type' => 'uuid'],
+            ],
+            'relations' => [
+                ['type' => 'belongsTo', 'target' => 'User', 'field' => 'owner_id'],
+                ['type' => 'belongsTo', 'target' => 'User', 'field' => 'created_by'],
+                ['type' => 'belongsTo', 'target' => 'User', 'field' => 'updated_by'],
+            ],
+            'options' => [],
+            'api' => [
+                'base_path' => '/crm/accounts',
+                'middleware' => [],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [],
+        ]);
+
+        $result = $generator->generate($blueprint, $driver);
+
+        $files = [];
+        foreach ($result->files() as $file) {
+            $files[$file->path] = $file->contents;
+        }
+
+        $model = $files['app/Domain/Crm/Models/Account.php'] ?? '';
+
+        $this->assertStringContainsString('public function owner(): BelongsTo', $model);
+        $this->assertStringContainsString("return \$this->belongsTo(User::class, 'owner_id');", $model);
+
+        $this->assertStringContainsString('public function createdBy(): BelongsTo', $model);
+        $this->assertStringContainsString("return \$this->belongsTo(User::class, 'created_by');", $model);
+
+        $this->assertStringContainsString('public function updatedBy(): BelongsTo', $model);
+        $this->assertStringContainsString("return \$this->belongsTo(User::class, 'updated_by');", $model);
+    }
+
     private function makeTemplateEngine(): TemplateEngine
     {
     return new TemplateEngine([], ['debug' => false, 'cache' => false]);
