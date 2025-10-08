@@ -26,6 +26,8 @@ php artisan vendor:publish --provider="BlueprintX\BlueprintXServiceProvider" --t
 | `blueprints` | `base_path('blueprints')` | Directorio raíz donde se buscarán los YAML. Debe existir antes de ejecutar los comandos. |
 | `templates` | `resource_path('vendor/blueprintx/templates')` | Ruta opcional con plantillas sobrescritas. Si no existe, se usan las provistas por el paquete. |
 | `output` | `base_path()` | Directorio base donde se escribirán los archivos generados. |
+| `application` | `app/Application` | Ubicación base de comandos, queries y filtros específicos por módulo. |
+| `application_shared` | `app/Application/Shared` | Carpeta donde se crea `Filters/QueryFilter.php`, reutilizable por todos los módulos. |
 | `api` | `app/Http/Controllers/Api` | Carpeta relativa para controladores HTTP. |
 | `api_requests` | `app/Http/Requests/Api` | Carpeta relativa para Form Requests. |
 | `api_resources` | `app/Http/Resources` | Carpeta relativa para `JsonResource`. |
@@ -62,6 +64,17 @@ La sección `features.api` controla cómo se generan controladores, Form Request
 - `resources.preserve_query`: mantiene parámetros de consulta al paginar.
 - `controller_traits`: mapea traits que se adjuntan a los controladores (por defecto `HandlesDomainExceptions` y `FormatsPagination`).
 - `optimistic_locking`: agrupa banderas para controlar el bloqueo optimista (cabeceras, columnas, wildcard `*`). Cada bandera puede sobrescribirse vía variables de entorno `BLUEPRINTX_API_OPTIMISTIC_LOCK_*`.
+
+## Filtros de consulta compartidos
+
+BlueprintX genera `App\Application\Shared\Filters\QueryFilter`, una clase abstracta pensada para centralizar filtros reutilizables:
+
+- Expone listas configurables de `allowedIncludes`, `allowedSorts`, `defaultSort` y `searchable` que puedes ajustar en cada filtro específico del módulo.
+- Implementa helpers para interpretar parámetros `include`, `search`/`q`, `sort`/`sort_by` y `filter[*]` desde el `Request`.
+- Ofrece un método `applyTo(Builder $builder, Request $request)` que encapsula includes, búsqueda libre, ordenamiento y filtros personalizados.
+- Permite sobreescribir `applyAdditional` cuando necesites lógica ad-hoc después de aplicar los auxiliares provistos.
+
+Puedes mover la clase a otro namespace cambiando `paths.application_shared` o publicando la plantilla Twig (`application/shared/query_filter.stub.twig`) para introducir comportamientos personalizados.
 
 ## Características de documentación
 

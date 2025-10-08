@@ -116,7 +116,14 @@ Controla la generación de controladores, rutas implícitas y `JsonResource`.
 | `fields` | Lista de campos a exponer (útil en `search`). |
 | `by` | Campo de agregación para `stats`. |
 
-Los recursos pueden incluir relaciones mediante `api.resources.includes`, aceptando strings simples (`department`) o objetos con `relation`, `alias` y `resource` para mapear a clases personalizadas.
+Los recursos pueden incluir relaciones mediante `api.resources.includes`:
+
+- **Entrada rápida**: usa strings (`contacts`) para cargar la relación con el mismo nombre.
+- **Entrada avanzada**: declara objetos con `relation`, `alias` y `resource` (FQCN opcional) cuando necesites renombrar la propiedad o apuntar a un recurso distinto.
+- **Relaciones soportadas**: `belongsTo`, `hasOne`, `hasMany` y `belongsToMany`. BlueprintX infiere si debe usar un `Resource` o una `Collection` según el tipo de relación.
+- **Cargas seguras**: sólo se incluirán relaciones declaradas en la sección `relations`; cualquier nombre no reconocido se ignora durante la generación.
+
+Los controladores generados aplican `with` automáticamente y los `JsonResource` exponen la colección o recurso individual respetando alias y clases personalizadas.
 
 ## Documentación (`docs`)
 

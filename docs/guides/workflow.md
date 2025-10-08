@@ -40,3 +40,4 @@ parent: Guías
 - Define métricas o verificaciones posteriores (por ejemplo, smoke tests de endpoints) para detectar divergencias tempranas.
 - Cuando agregues nuevas características al generador, incluye casos de prueba y snapshots en `packages/blueprintx/tests`.
 - Revisa periódicamente la [referencia de configuración](../reference/configuration.html) para sincronizar flags como `optimistic_locking` o namespaces personalizados con tu arquitectura.
+- Extiende `App\Application\Shared\Filters\QueryFilter` en tus filtros por módulo para mantener coherentes los includes permitidos, campos ordenables y lógica de búsqueda.

@@ -11,6 +11,7 @@ nav_order: 99
 - Se incorporan pruebas unitarias y se actualizan snapshots para asegurar el nuevo comportamiento.
 - Los repositorios generados se registran automáticamente en `AppServiceProvider`, eliminando la necesidad de enlazarlos manualmente.
 - Se genera automáticamente la clase base `App\Application\Shared\Filters\QueryFilter` para habilitar filtros reutilizables en las consultas.
+- Los controladores y recursos API ahora interpretan `api.resources.includes`, soportando relaciones `belongsTo`, `hasOne`, colecciones y alias declarados en el blueprint.
 
 ## 1.0.1 · 2025-10-08
 
