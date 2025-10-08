@@ -205,6 +205,7 @@ class ApiLayerGeneratorTest extends TestCase
             ],
             'relations' => [
                 ['type' => 'belongsTo', 'target' => 'Department', 'field' => 'department_id'],
+                ['type' => 'hasMany', 'target' => 'Project', 'field' => 'employee_id'],
             ],
             'options' => [],
             'api' => [
@@ -216,6 +217,7 @@ class ApiLayerGeneratorTest extends TestCase
                 'resources' => [
                     'includes' => [
                         ['relation' => 'department', 'alias' => 'department'],
+                        'projects',
                     ],
                 ],
             ],
@@ -228,15 +230,18 @@ class ApiLayerGeneratorTest extends TestCase
 
         $controller = $this->findFileByPath($result->files(), 'app/Http/Controllers/Api/Hr/EmployeeController.php');
         $this->assertNotNull($controller);
-    $this->assertStringContainsString("'with' => ['department']", $controller->contents);
-    $this->assertStringContainsString('$resource->load([\'department\']);', $controller->contents);
-    $this->assertStringContainsString('$updated->load([\'department\']);', $controller->contents);
+        $this->assertStringContainsString("'with' => ['department', 'projects']", $controller->contents);
+    $this->assertStringContainsString("\$resource->load(['department', 'projects']);", $controller->contents);
+    $this->assertStringContainsString("\$updated->load(['department', 'projects']);", $controller->contents);
 
         $resource = $this->findFileByPath($result->files(), 'app/Http/Resources/Hr/EmployeeResource.php');
         $this->assertNotNull($resource);
         $this->assertStringContainsString('use App\\Http\\Resources\\Hr\\DepartmentResource;', $resource->contents);
         $this->assertStringContainsString("'department' => DepartmentResource::make(", $resource->contents);
         $this->assertStringContainsString("whenLoaded('department')", $resource->contents);
+        $this->assertStringContainsString('use App\\Http\\Resources\\Hr\\ProjectCollection;', $resource->contents);
+        $this->assertStringContainsString("'projects' => ProjectCollection::make(", $resource->contents);
+        $this->assertStringContainsString("whenLoaded('projects')", $resource->contents);
 
         $this->assertCount(0, $result->warnings());
     }

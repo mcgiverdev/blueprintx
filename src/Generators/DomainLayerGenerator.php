@@ -219,6 +219,9 @@ class DomainLayerGenerator implements LayerGenerator
         $casts = [];
         $identifierField = 'id';
         $identifierPhpType = 'int';
+        $identifierColumnType = 'increments';
+        $identifierAutoIncrement = true;
+        $identifierKeyType = null;
 
         foreach ($blueprint->fields() as $field) {
             $fillable[] = $field->name;
@@ -228,12 +231,22 @@ class DomainLayerGenerator implements LayerGenerator
 
             if ($field->name === 'id') {
                 $identifierField = $field->name;
+                $identifierColumnType = $type;
                 $identifierPhpType = match ($type) {
                     'uuid', 'guid', 'string' => 'string',
                     'ulid' => 'string',
                     'bigint', 'biginteger', 'unsignedbiginteger' => 'int',
                     default => in_array($type, ['integer', 'increments', 'bigincrements', 'id'], true) ? 'int' : 'mixed',
                 };
+
+                $identifierAutoIncrement = in_array($type, ['id', 'increments', 'integer', 'bigincrements', 'bigint', 'biginteger', 'unsignedbiginteger', 'unsignedbigint', 'unsignedinteger'], true);
+
+                if (in_array($type, ['uuid', 'guid', 'ulid', 'string'], true)) {
+                    $identifierKeyType = 'string';
+                    $identifierAutoIncrement = false;
+                } elseif ($identifierAutoIncrement) {
+                    $identifierKeyType = null;
+                }
             }
 
             if ($type === 'boolean') {
@@ -278,6 +291,10 @@ class DomainLayerGenerator implements LayerGenerator
 
         if ($identifierPhpType === 'mixed') {
             $identifierPhpType = 'int|string';
+        }
+
+        if ($identifierKeyType === null && in_array($identifierColumnType, ['uuid', 'guid', 'ulid', 'string'], true)) {
+            $identifierKeyType = 'string';
         }
 
         $relationReturnTypes = [];
@@ -351,6 +368,9 @@ class DomainLayerGenerator implements LayerGenerator
             'identifier' => [
                 'field' => $identifierField,
                 'php_type' => $identifierPhpType,
+                'column_type' => $identifierColumnType,
+                'auto_increment' => $identifierAutoIncrement,
+                'key_type' => $identifierKeyType,
             ],
         ];
     }

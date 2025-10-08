@@ -43,6 +43,57 @@ class DomainLayerGeneratorTest extends TestCase
         $this->assertCount(0, $result->warnings());
     }
 
+    public function test_it_marks_uuid_identifiers_as_non_incrementing(): void
+    {
+        $engine = $this->makeTemplateEngine();
+        $driver = $this->makeHexagonalDriver();
+        $this->registerDriverNamespaces($engine, $driver);
+
+        $generator = new DomainLayerGenerator($engine);
+        $blueprint = Blueprint::fromArray([
+            'path' => 'blueprints/crm/contact.yaml',
+            'module' => 'crm',
+            'entity' => 'Contact',
+            'table' => 'contacts',
+            'architecture' => 'hexagonal',
+            'fields' => [
+                ['name' => 'id', 'type' => 'uuid'],
+                ['name' => 'tenant_id', 'type' => 'uuid', 'rules' => 'required|uuid|exists:tenants,id'],
+                ['name' => 'email', 'type' => 'string', 'rules' => 'required|email|max:120'],
+            ],
+            'relations' => [
+                ['type' => 'belongsTo', 'target' => 'Tenant', 'field' => 'tenant_id'],
+            ],
+            'options' => [
+                'timestamps' => true,
+            ],
+            'api' => [
+                'base_path' => '/crm/contacts',
+                'middleware' => [],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [],
+        ]);
+
+        $result = $generator->generate($blueprint, $driver);
+
+        $files = [];
+        foreach ($result->files() as $file) {
+            $files[$file->path] = $file->contents;
+        }
+
+        $this->assertArrayHasKey('app/Domain/Crm/Models/Contact.php', $files);
+
+        $contents = $files['app/Domain/Crm/Models/Contact.php'];
+
+    $this->assertStringContainsString('use Illuminate\\Database\\Eloquent\\Concerns\\HasUuids;', $contents);
+        $this->assertStringContainsString('public $incrementing = false;', $contents);
+        $this->assertStringContainsString("protected \$keyType = 'string';", $contents);
+    $this->assertStringContainsString('use HasUuids;', $contents);
+    }
+
     public function test_it_uses_module_to_customize_paths_and_namespaces(): void
     {
         $engine = $this->makeTemplateEngine();

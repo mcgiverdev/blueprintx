@@ -4,6 +4,7 @@ namespace App\Domain\Hr\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -13,6 +14,7 @@ use App\Domain\Hr\Models\Contract;
 class Employee extends Model
 {
     use HasFactory;
+    use HasUuids;
     use SoftDeletes;
 
     protected $table = 'employees';
@@ -44,6 +46,10 @@ class Employee extends Model
         'salary' => 'decimal:2',
         'updated_at' => 'datetime',
     ];
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
 
     public function department(): BelongsTo
     {

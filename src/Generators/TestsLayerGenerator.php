@@ -62,7 +62,8 @@ class TestsLayerGenerator implements LayerGenerator
      */
     private function buildContext(Blueprint $blueprint, ArchitectureDriver $driver, array $options): array
     {
-        $relations = $this->prepareRelations($blueprint);
+    $relations = $this->prepareRelations($blueprint);
+    $relationImports = $this->uniqueRelationImports($relations);
         $payloads = $this->prepareFieldPayloads($blueprint, $relations);
 
         $naming = $this->namingContext($blueprint);
@@ -100,6 +101,7 @@ class TestsLayerGenerator implements LayerGenerator
                 'metadata' => $driver->metadata(),
             ],
             'relations' => $relations,
+            'relation_imports' => $relationImports,
             'tests' => $payloads,
             'options' => $blueprint->options(),
             'optimistic_locking' => $optimisticLocking,
@@ -245,15 +247,44 @@ class TestsLayerGenerator implements LayerGenerator
         return $relations;
     }
 
-    private function relationVariableFromField(string $field, string $target): string
+    /**
+     * @param array<int, array<string, mixed>> $relations
+     * @return array<int, string>
+     */
+    private function uniqueRelationImports(array $relations): array
     {
-        if (str_ends_with($field, '_id')) {
-            $base = substr($field, 0, -3);
+        $imports = [];
 
-            return Str::camel($base);
+        foreach ($relations as $relation) {
+            $import = $relation['import'] ?? null;
+
+            if (! is_string($import) || $import === '') {
+                continue;
+            }
+
+            if (! in_array($import, $imports, true)) {
+                $imports[] = $import;
+            }
         }
 
-        return Str::camel($target);
+        return $imports;
+    }
+
+    private function relationVariableFromField(string $field, string $target): string
+    {
+        $candidate = $field;
+
+        if (str_ends_with($field, '_id')) {
+            $candidate = substr($field, 0, -3);
+        }
+
+        $variable = Str::camel($candidate);
+
+        if ($variable === '') {
+            $variable = Str::camel($target);
+        }
+
+        return $variable;
     }
 
     /**
@@ -569,8 +600,9 @@ class TestsLayerGenerator implements LayerGenerator
     private function sampleFieldValues(Field $field): array
     {
         $type = strtolower($field->type);
-        $rules = $field->rules ?? '';
+        $rules = is_string($field->rules) ? $field->rules : '';
         $name = $field->name;
+        $ruleOptions = $this->parseRuleOptions($rules);
 
         if (str_contains($rules, 'email')) {
             return [
@@ -579,22 +611,50 @@ class TestsLayerGenerator implements LayerGenerator
             ];
         }
 
+        if ($ruleOptions['url']) {
+            return [
+                var_export('https://example.com', true),
+                var_export('https://example.org', true),
+            ];
+        }
+
+        if ($ruleOptions['ip']) {
+            return [
+                var_export('192.168.1.10', true),
+                var_export('192.168.1.20', true),
+            ];
+        }
+
+        if ($ruleOptions['enum'] !== []) {
+            $first = $ruleOptions['enum'][0];
+            $second = $ruleOptions['enum'][1] ?? $first;
+
+            if ($second === $first && count($ruleOptions['enum']) > 1) {
+                $second = $ruleOptions['enum'][1];
+            }
+
+            return [
+                var_export($first, true),
+                var_export($second, true),
+            ];
+        }
+
         return match ($type) {
             'string', 'char', 'varchar', 'text', 'mediumtext', 'longtext' => [
-                var_export('Sample ' . Str::title(str_replace('_', ' ', $name)), true),
-                var_export('Updated ' . Str::title(str_replace('_', ' ', $name)), true),
+                var_export($this->sampleStringValue($name, $ruleOptions, false), true),
+                var_export($this->sampleStringValue($name, $ruleOptions, true), true),
             ],
             'boolean' => [
                 var_export(true, true),
                 var_export(false, true),
             ],
             'integer', 'bigint', 'biginteger', 'smallint', 'tinyint', 'unsignedbigint', 'unsignedinteger', 'unsignedsmallint', 'unsignedtinyint' => [
-                var_export(100, true),
-                var_export(200, true),
+                var_export($this->sampleIntegerValue($ruleOptions, false), true),
+                var_export($this->sampleIntegerValue($ruleOptions, true), true),
             ],
             'decimal', 'numeric', 'float', 'double' => [
-                var_export('4200.00', true),
-                var_export('6500.50', true),
+                var_export($this->sampleDecimalValue($field, $ruleOptions, false), true),
+                var_export($this->sampleDecimalValue($field, $ruleOptions, true), true),
             ],
             'uuid', 'guid', 'ulid' => [
                 var_export('00000000-0000-0000-0000-000000000001', true),
@@ -608,10 +668,173 @@ class TestsLayerGenerator implements LayerGenerator
                 var_export('2025-01-01T10:00:00Z', true),
                 var_export('2025-12-31T15:30:00Z', true),
             ],
+            'json', 'jsonb' => [
+                var_export(['sample' => 'payload'], true),
+                var_export(['updated' => 'payload'], true),
+            ],
             default => [
-                var_export('Sample ' . Str::title(str_replace('_', ' ', $name)), true),
-                var_export('Updated ' . Str::title(str_replace('_', ' ', $name)), true),
+                var_export($this->sampleStringValue($name, $ruleOptions, false), true),
+                var_export($this->sampleStringValue($name, $ruleOptions, true), true),
             ],
         };
+    }
+
+    /**
+     * @return array{enum:array<int,string>,min:?float,max:?float,size:?int,url:bool,ip:bool}
+     */
+    private function parseRuleOptions(string $rules): array
+    {
+        $options = [
+            'enum' => [],
+            'min' => null,
+            'max' => null,
+            'size' => null,
+            'url' => false,
+            'ip' => false,
+        ];
+
+        if ($rules === '') {
+            return $options;
+        }
+
+        foreach (explode('|', $rules) as $rule) {
+            $rule = trim($rule);
+
+            if ($rule === '') {
+                continue;
+            }
+
+            if (str_starts_with($rule, 'in:')) {
+                $values = explode(',', substr($rule, 3));
+                $values = array_values(array_filter(array_map('trim', $values), static fn ($value): bool => $value !== ''));
+
+                if ($values !== []) {
+                    $options['enum'] = $values;
+                }
+
+                continue;
+            }
+
+            if (str_starts_with($rule, 'min:')) {
+                $options['min'] = (float) substr($rule, 4);
+
+                continue;
+            }
+
+            if (str_starts_with($rule, 'max:')) {
+                $options['max'] = (float) substr($rule, 4);
+
+                continue;
+            }
+
+            if (str_starts_with($rule, 'size:')) {
+                $options['size'] = (int) substr($rule, 5);
+
+                continue;
+            }
+
+            if ($rule === 'url') {
+                $options['url'] = true;
+
+                continue;
+            }
+
+            if ($rule === 'ip') {
+                $options['ip'] = true;
+            }
+        }
+
+        return $options;
+    }
+
+    /**
+     * @param array{enum:array<int,string>,min:?float,max:?float,size:?int,url:bool,ip:bool} $ruleOptions
+     */
+    private function sampleStringValue(string $name, array $ruleOptions, bool $alternate): string
+    {
+        if ($ruleOptions['size'] !== null) {
+            return $this->sampleSizedString($ruleOptions['size'], $alternate);
+        }
+
+        $label = Str::title(str_replace('_', ' ', $name));
+
+        return ($alternate ? 'Updated ' : 'Sample ') . $label;
+    }
+
+    /**
+     * @param array{enum:array<int,string>,min:?float,max:?float,size:?int,url:bool,ip:bool} $ruleOptions
+     */
+    private function sampleIntegerValue(array $ruleOptions, bool $alternate): int
+    {
+        $min = $ruleOptions['min'];
+        $max = $ruleOptions['max'];
+
+        if ($min !== null && $max !== null) {
+            return (int) ($alternate ? $max : $min);
+        }
+
+        if ($min !== null) {
+            return (int) ($alternate ? $min + 1 : $min);
+        }
+
+        if ($max !== null) {
+            $base = (int) $max;
+
+            return $alternate ? $base : max($base - 1, 0);
+        }
+
+        return $alternate ? 200 : 100;
+    }
+
+    /**
+     * @param array{enum:array<int,string>,min:?float,max:?float,size:?int,url:bool,ip:bool} $ruleOptions
+     */
+    private function sampleDecimalValue(Field $field, array $ruleOptions, bool $alternate): string
+    {
+        $min = $ruleOptions['min'];
+        $max = $ruleOptions['max'];
+        $scale = $field->scale ?? 2;
+
+        if ($min !== null && $max !== null) {
+            $value = $alternate ? $max : $min;
+
+            return $this->formatDecimalSample($value, $scale);
+        }
+
+        if ($min !== null) {
+            $value = $alternate ? ($min + 1) : $min;
+
+            return $this->formatDecimalSample($value, $scale);
+        }
+
+        if ($max !== null) {
+            $value = $alternate ? $max : max($max - 1, 0);
+
+            return $this->formatDecimalSample($value, $scale);
+        }
+
+        $defaults = $alternate ? 6500.50 : 4200.00;
+
+        return $this->formatDecimalSample($defaults, $scale);
+    }
+
+    private function sampleSizedString(int $size, bool $alternate): string
+    {
+        if ($size === 3) {
+            return $alternate ? 'EUR' : 'USD';
+        }
+
+        if ($size === 5) {
+            return $alternate ? 'en-US' : 'es-ES';
+        }
+
+        $character = $alternate ? 'Z' : 'A';
+
+        return str_repeat($character, max($size, 1));
+    }
+
+    private function formatDecimalSample(float $value, int $scale): string
+    {
+        return number_format($value, max($scale, 0), '.', '');
     }
 }

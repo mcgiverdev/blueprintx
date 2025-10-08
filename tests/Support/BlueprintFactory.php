@@ -56,10 +56,16 @@ class BlueprintFactory
                 ],
             ],
             'errors' => [
-                'inactive' => [
-                    'message' => 'El empleado se encuentra inactivo.',
+                [
+                    'key' => 'inactive',
+                    'name' => 'inactive',
+                    'class' => 'Inactive',
+                    'exception_class' => 'InactiveException',
                     'code' => 'domain.employee.inactive',
+                    'message' => 'El empleado se encuentra inactivo.',
                     'status' => 409,
+                    'extends' => 'DomainException',
+                    'description' => null,
                 ],
             ],
             'metadata' => [],

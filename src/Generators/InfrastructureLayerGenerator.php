@@ -47,6 +47,10 @@ class InfrastructureLayerGenerator implements LayerGenerator
             $this->templates->render($template, $context)
         ));
 
+        if ($serviceProviderFile = $this->makeAppServiceProviderFile($context, $options)) {
+            $result->addFile($serviceProviderFile);
+        }
+
         return $result;
     }
 
@@ -327,4 +331,201 @@ class InfrastructureLayerGenerator implements LayerGenerator
             ],
         ];
     }
+
+    /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $options
+     */
+    private function makeAppServiceProviderFile(array $context, array $options): ?GeneratedFile
+    {
+        $interfaceFqcn = $this->normalizeClassName(sprintf('%s\\%sRepositoryInterface', $context['domain']['repositories'], $context['naming']['entity_studly']));
+        $implementationFqcn = $this->normalizeClassName(sprintf('%s\\Eloquent%sRepository', $context['namespaces']['repositories'], $context['naming']['entity_studly']));
+
+        $providerPath = rtrim($options['paths']['providers'] ?? 'app/Providers', '/') . '/AppServiceProvider.php';
+        $absolutePath = $this->resolveAbsolutePath($providerPath);
+
+        $existingContents = null;
+
+        if (is_string($absolutePath) && is_file($absolutePath)) {
+            $existingContents = file_get_contents($absolutePath) ?: null;
+        }
+
+        $parsed = $this->parseServiceProvider($existingContents ?? '');
+        $bindings = $parsed['bindings'];
+
+        $bindings[$interfaceFqcn] = $implementationFqcn;
+
+        $rendered = $this->renderServiceProvider($bindings, $parsed['uses']);
+
+        return new GeneratedFile($providerPath, $rendered);
+    }
+
+    /**
+     * @return array{bindings: array<string, string>, uses: array<int, string>}
+     */
+    private function parseServiceProvider(string $contents): array
+    {
+        $bindings = [];
+        $uses = [];
+
+        if ($contents === '') {
+            return ['bindings' => [], 'uses' => []];
+        }
+
+        preg_match_all('/^use\s+([^;]+);/m', $contents, $useMatches);
+
+        $useMap = [];
+
+        foreach ($useMatches[1] as $fqcn) {
+            $fqcn = $this->normalizeClassName($fqcn);
+            $useMap[$this->classBasename($fqcn)] = $fqcn;
+            $uses[] = $fqcn;
+        }
+
+        preg_match_all('/\$this->\s*app->\s*bind\(\s*([^,]+)::class\s*,\s*([^)]+)::class\s*\);/m', $contents, $bindMatches, PREG_SET_ORDER);
+
+        foreach ($bindMatches as $match) {
+            $interface = $this->resolveImportedClass($match[1], $useMap);
+            $implementation = $this->resolveImportedClass($match[2], $useMap);
+
+            if ($interface !== null && $implementation !== null) {
+                $bindings[$interface] = $implementation;
+            }
+        }
+
+        return ['bindings' => $bindings, 'uses' => $uses];
+    }
+
+    /**
+     * @param array<string, string> $bindings
+     * @param array<int, string> $existingUses
+     */
+    private function renderServiceProvider(array $bindings, array $existingUses = []): string
+    {
+        $normalizedBindings = [];
+
+        foreach ($bindings as $interface => $implementation) {
+            $normalizedBindings[$this->normalizeClassName($interface)] = $this->normalizeClassName($implementation);
+        }
+
+        $entries = [];
+
+        foreach ($normalizedBindings as $interface => $implementation) {
+            $entries[] = [
+                'interface' => $interface,
+                'implementation' => $implementation,
+                'interface_short' => $this->classBasename($interface),
+                'implementation_short' => $this->classBasename($implementation),
+            ];
+        }
+
+        usort($entries, static fn (array $a, array $b): int => strcmp($a['interface_short'], $b['interface_short']));
+
+        $imports = array_merge(['Illuminate\\Support\\ServiceProvider'], $existingUses);
+
+        foreach ($entries as $entry) {
+            $imports[] = $entry['interface'];
+            $imports[] = $entry['implementation'];
+        }
+
+        $imports = array_values(array_unique(array_map([$this, 'normalizeClassName'], $imports)));
+        sort($imports);
+
+        $useLines = array_map(static fn (string $fqcn): string => 'use ' . $fqcn . ';', $imports);
+        $useBlock = implode("\n", $useLines);
+
+        $bindingLines = array_map(static function (array $entry): string {
+            return sprintf(
+                '        $this->app->bind(%s::class, %s::class);',
+                $entry['interface_short'],
+                $entry['implementation_short']
+            );
+        }, $entries);
+
+        $registerBody = $bindingLines === []
+            ? "        //\n"
+            : implode("\n", $bindingLines) . "\n";
+
+        return <<<PHP
+<?php
+
+namespace App\Providers;
+
+{$useBlock}
+
+class AppServiceProvider extends ServiceProvider
+{
+    /**
+     * Register any application services.
+     */
+    public function register(): void
+    {
+{$registerBody}    }
+
+    /**
+     * Bootstrap any application services.
+     */
+    public function boot(): void
+    {
+        //
+    }
+}
+
+PHP;
+    }
+
+    /**
+     * @param array<string, string> $useMap
+     */
+    private function resolveImportedClass(string $class, array $useMap): ?string
+    {
+        $class = trim($class);
+
+        if ($class === '') {
+            return null;
+        }
+
+        if (str_starts_with($class, '\\')) {
+            return $this->normalizeClassName($class);
+        }
+
+        if (str_contains($class, '\\')) {
+            return $this->normalizeClassName($class);
+        }
+
+        return $useMap[$class] ?? $this->normalizeClassName($class);
+    }
+
+    private function normalizeClassName(string $class): string
+    {
+        $class = trim($class);
+
+        return ltrim($class, '\\');
+    }
+
+    private function classBasename(string $class): string
+    {
+        $class = $this->normalizeClassName($class);
+        $position = strrpos($class, '\\');
+
+        if ($position === false) {
+            return $class;
+        }
+
+        return substr($class, $position + 1);
+    }
+
+    private function resolveAbsolutePath(string $relativePath): ?string
+    {
+        $base = getcwd();
+
+        if ($base === false) {
+            return null;
+        }
+
+        $normalized = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $relativePath);
+
+        return rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . ltrim($normalized, DIRECTORY_SEPARATOR);
+    }
+
 }

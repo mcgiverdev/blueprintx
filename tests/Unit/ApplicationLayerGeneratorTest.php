@@ -26,7 +26,7 @@ class ApplicationLayerGeneratorTest extends TestCase
 
         $result = $generator->generate($blueprint, $driver);
 
-        $this->assertCount(6, $result->files());
+    $this->assertCount(7, $result->files());
 
         $files = [];
         foreach ($result->files() as $file) {
@@ -36,10 +36,13 @@ class ApplicationLayerGeneratorTest extends TestCase
         $this->assertArrayHasKey('app/Application/Commands/CreateUserCommand.php', $files);
         $this->assertArrayHasKey('app/Application/Commands/UpdateUserCommand.php', $files);
         $this->assertArrayHasKey('app/Application/Queries/ListUsersQuery.php', $files);
-        $this->assertArrayHasKey('app/Application/Queries/Filters/UserFilter.php', $files);
+    $this->assertArrayHasKey('app/Application/Queries/Filters/UserFilter.php', $files);
+    $this->assertArrayHasKey('app/Application/Shared/Filters/QueryFilter.php', $files);
 
         $this->assertStringContainsString('namespace App\\Application\\Commands;', $files['app/Application/Commands/CreateUserCommand.php']);
         $this->assertStringContainsString('class CreateUserCommand', $files['app/Application/Commands/CreateUserCommand.php']);
+    $this->assertStringContainsString('namespace App\\Application\\Shared\\Filters;', $files['app/Application/Shared/Filters/QueryFilter.php']);
+    $this->assertStringContainsString('abstract class QueryFilter', $files['app/Application/Shared/Filters/QueryFilter.php']);
         $this->assertCount(0, $result->warnings());
     }
 
@@ -64,8 +67,10 @@ class ApplicationLayerGeneratorTest extends TestCase
             $files[$file->path] = $file->contents;
         }
 
-        $this->assertArrayHasKey('app/Modules/Billing/Commands/CreateInvoiceCommand.php', $files);
-        $this->assertStringContainsString('namespace App\\Modules\\Billing\\Commands;', $files['app/Modules/Billing/Commands/CreateInvoiceCommand.php']);
+    $this->assertArrayHasKey('app/Modules/Billing/Commands/CreateInvoiceCommand.php', $files);
+    $this->assertArrayHasKey('app/Modules/Shared/Filters/QueryFilter.php', $files);
+    $this->assertStringContainsString('namespace App\\Modules\\Billing\\Commands;', $files['app/Modules/Billing/Commands/CreateInvoiceCommand.php']);
+    $this->assertStringContainsString('namespace App\\Modules\\Shared\\Filters;', $files['app/Modules/Shared/Filters/QueryFilter.php']);
     }
 
     public function test_it_adds_warning_when_template_missing(): void
@@ -113,7 +118,7 @@ class ApplicationLayerGeneratorTest extends TestCase
 
         $result = $generator->generate($blueprint, $driver);
 
-        $this->assertGreaterThanOrEqual(6, count($result->files()));
+    $this->assertGreaterThanOrEqual(7, count($result->files()));
 
         $files = [];
 

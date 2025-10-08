@@ -1,0 +1,220 @@
+<?php
+
+namespace {{ namespaces.shared_filters|default('App\\Application\\Shared\\Filters') }};
+
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+abstract class QueryFilter
+{
+    protected Builder $builder;
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $allowedIncludes = [];
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $allowedSorts = [];
+
+    /**
+     * @var array<string, string>
+     */
+    protected array $defaultSort = [
+        'column' => 'created_at',
+        'direction' => 'asc',
+    ];
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $searchable = [];
+
+    public function applyTo(Builder $builder, Request $request): Builder
+    {
+        $this->builder = $builder;
+
+        $this->applyIncludesFromRequest($request);
+        $this->applySearchFromRequest($request);
+        $this->applySortingFromRequest($request);
+        $this->applyFilterCallbacks($request);
+        $this->applyAdditional($request);
+
+        return $this->builder;
+    }
+
+    public function applySearch(Builder $builder, string $query): Builder
+    {
+        $this->builder = $builder;
+
+        $term = trim($query);
+
+        if ($term === '' || $this->searchable === []) {
+            return $this->builder;
+        }
+
+        $this->filterSearch($term);
+
+        return $this->builder;
+    }
+
+    protected function applyIncludesFromRequest(Request $request): void
+    {
+        $includes = $request->query('include', []);
+
+        if (is_string($includes)) {
+            $includes = array_map('trim', explode(',', $includes));
+        }
+
+        if (! is_array($includes)) {
+            return;
+        }
+
+        $includes = array_values(array_unique(array_filter(array_map('trim', $includes), static fn (string $include): bool => $include !== '')));
+
+        if ($includes === []) {
+            return;
+        }
+
+        if ($this->allowedIncludes !== []) {
+            $includes = array_values(array_intersect($includes, $this->allowedIncludes));
+        }
+
+        if ($includes === []) {
+            return;
+        }
+
+        $this->builder->with($includes);
+    }
+
+    protected function applySearchFromRequest(Request $request): void
+    {
+        $search = $request->query('search');
+
+        if ($search === null || $search === '') {
+            $search = $request->query('q');
+        }
+
+        if (! is_string($search) || trim($search) === '' || $this->searchable === []) {
+            return;
+        }
+
+        $this->filterSearch(trim($search));
+    }
+
+    protected function applySortingFromRequest(Request $request): void
+    {
+        $column = null;
+        $direction = null;
+
+        $sort = $request->query('sort');
+
+        if (is_array($sort)) {
+            $sort = reset($sort) ?: null;
+        }
+
+        if (is_string($sort) && $sort !== '') {
+            $sort = trim($sort);
+            $direction = str_starts_with($sort, '-') ? 'desc' : 'asc';
+            $candidate = ltrim($sort, '-');
+
+            if ($this->isSortable($candidate)) {
+                $column = $candidate;
+            }
+        }
+
+        if ($column === null) {
+            $candidate = $request->query('sort_by');
+
+            if (is_string($candidate) && $candidate !== '' && $this->isSortable($candidate)) {
+                $column = $candidate;
+
+                $candidateDirection = strtolower((string) $request->query('sort_order', $this->defaultSortDirection()));
+
+                if (in_array($candidateDirection, ['asc', 'desc'], true)) {
+                    $direction = $candidateDirection;
+                }
+            }
+        }
+
+        if ($column === null) {
+            $column = $this->defaultSortColumn();
+        }
+
+        if ($column === null) {
+            return;
+        }
+
+        $direction ??= $this->defaultSortDirection();
+
+        $this->builder->orderBy($column, $direction);
+    }
+
+    protected function applyFilterCallbacks(Request $request): void
+    {
+        $filters = $request->query('filter');
+
+        if (! is_array($filters)) {
+            return;
+        }
+
+        foreach ($filters as $key => $value) {
+            if (! is_string($key) || $key === '') {
+                continue;
+            }
+
+            $method = 'filter' . Str::studly($key);
+
+            if (! method_exists($this, $method)) {
+                continue;
+            }
+
+            $this->{$method}($value);
+        }
+    }
+
+    protected function defaultSortColumn(): ?string
+    {
+        $column = $this->defaultSort['column'] ?? null;
+
+        if (is_string($column) && $column !== '' && $this->isSortable($column)) {
+            return $column;
+        }
+
+        if ($column === null && $this->allowedSorts !== []) {
+            return $this->allowedSorts[0];
+        }
+
+        return null;
+    }
+
+    protected function defaultSortDirection(): string
+    {
+        $direction = strtolower($this->defaultSort['direction'] ?? 'asc');
+
+        return in_array($direction, ['asc', 'desc'], true) ? $direction : 'asc';
+    }
+
+    protected function isSortable(string $column): bool
+    {
+        if ($column === '') {
+            return false;
+        }
+
+        if ($this->allowedSorts === []) {
+            return true;
+        }
+
+        return in_array($column, $this->allowedSorts, true);
+    }
+
+    abstract protected function filterSearch(string $value): void;
+
+    protected function applyAdditional(Request $request): void
+    {
+        // Mantener para que las clases hijas puedan extender la lógica.
+    }
+}

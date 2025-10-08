@@ -26,12 +26,20 @@ class InfrastructureLayerGeneratorTest extends TestCase
 
         $result = $generator->generate($blueprint, $driver);
 
-        $this->assertCount(1, $result->files());
-        $file = $result->files()[0];
+        $this->assertCount(2, $result->files());
 
-    $this->assertSame('app/Infrastructure/Persistence/Eloquent/Repositories/EloquentUserRepository.php', $file->path);
-    $this->assertStringContainsString('namespace App\\Infrastructure\\Persistence\\Eloquent\\Repositories;', $file->contents);
-    $this->assertStringContainsString('class EloquentUserRepository', $file->contents);
+        $repositoryFile = $result->files()[0];
+        $providerFile = $result->files()[1];
+
+        $this->assertSame('app/Infrastructure/Persistence/Eloquent/Repositories/EloquentUserRepository.php', $repositoryFile->path);
+        $this->assertStringContainsString('namespace App\\Infrastructure\\Persistence\\Eloquent\\Repositories;', $repositoryFile->contents);
+        $this->assertStringContainsString('class EloquentUserRepository', $repositoryFile->contents);
+
+        $this->assertSame('app/Providers/AppServiceProvider.php', $providerFile->path);
+        $this->assertStringContainsString('use App\\Domain\\Repositories\\UserRepositoryInterface;', $providerFile->contents);
+        $this->assertStringContainsString('use App\\Infrastructure\\Persistence\\Eloquent\\Repositories\\EloquentUserRepository;', $providerFile->contents);
+        $this->assertStringContainsString('$this->app->bind(UserRepositoryInterface::class, EloquentUserRepository::class);', $providerFile->contents);
+
         $this->assertCount(0, $result->warnings());
     }
 
@@ -51,10 +59,19 @@ class InfrastructureLayerGeneratorTest extends TestCase
 
         $result = $generator->generate($blueprint, $driver, $options);
 
-        $file = $result->files()[0];
-    $this->assertSame('app/Modules/Sales/Repositories/EloquentOrderRepository.php', $file->path);
-    $this->assertStringContainsString('namespace App\\Modules\\Sales\\Repositories;', $file->contents);
-    $this->assertStringContainsString('class EloquentOrderRepository', $file->contents);
+        $this->assertCount(2, $result->files());
+
+        $repositoryFile = $result->files()[0];
+        $providerFile = $result->files()[1];
+
+        $this->assertSame('app/Modules/Sales/Repositories/EloquentOrderRepository.php', $repositoryFile->path);
+        $this->assertStringContainsString('namespace App\\Modules\\Sales\\Repositories;', $repositoryFile->contents);
+        $this->assertStringContainsString('class EloquentOrderRepository', $repositoryFile->contents);
+
+        $this->assertSame('app/Providers/AppServiceProvider.php', $providerFile->path);
+        $this->assertStringContainsString('use App\\Domain\\Sales\\Repositories\\OrderRepositoryInterface;', $providerFile->contents);
+        $this->assertStringContainsString('use App\\Modules\\Sales\\Repositories\\EloquentOrderRepository;', $providerFile->contents);
+        $this->assertStringContainsString('$this->app->bind(OrderRepositoryInterface::class, EloquentOrderRepository::class);', $providerFile->contents);
     }
 
     public function test_it_warns_when_template_missing(): void
@@ -100,12 +117,16 @@ class InfrastructureLayerGeneratorTest extends TestCase
 
         $result = $generator->generate($blueprint, $driver);
 
-        $this->assertCount(1, $result->files());
+    $this->assertCount(2, $result->files());
 
-        $file = $result->files()[0];
+    $repositoryFile = $result->files()[0];
+    $providerFile = $result->files()[1];
 
-        $this->assertSame('app/Infrastructure/Persistence/Eloquent/Hr/Repositories/EloquentEmployeeRepository.php', $file->path);
-        $this->assertSame($this->snapshot('infrastructure/EmployeeRepository.snap'), $this->normalizeNewLines($file->contents));
+    $this->assertSame('app/Infrastructure/Persistence/Eloquent/Hr/Repositories/EloquentEmployeeRepository.php', $repositoryFile->path);
+    $this->assertSame($this->snapshot('infrastructure/EmployeeRepository.snap'), $this->normalizeNewLines($repositoryFile->contents));
+
+    $this->assertSame('app/Providers/AppServiceProvider.php', $providerFile->path);
+    $this->assertStringContainsString('$this->app->bind(EmployeeRepositoryInterface::class, EloquentEmployeeRepository::class);', $providerFile->contents);
     }
 
     private function makeTemplateEngine(): TemplateEngine

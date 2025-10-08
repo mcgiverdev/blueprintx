@@ -284,7 +284,13 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $columns = [];
 
-        $columns[] = '$table->id();';
+        $identifierField = $this->findFieldByName($blueprint, 'id');
+
+        if ($identifierField !== null) {
+            $columns[] = $this->buildPrimaryKeyColumn($identifierField, $relationsByField['id'] ?? null);
+        } else {
+            $columns[] = '$table->id();';
+        }
 
         foreach ($blueprint->fields() as $field) {
             if ($field->name === 'id') {
@@ -313,6 +319,46 @@ class DatabaseLayerGenerator implements LayerGenerator
             'table' => $table,
             'columns' => $columns,
         ];
+    }
+
+    private function findFieldByName(Blueprint $blueprint, string $name): ?Field
+    {
+        foreach ($blueprint->fields() as $field) {
+            if ($field->name === $name) {
+                return $field;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed>|null $relation
+     */
+    private function buildPrimaryKeyColumn(Field $field, ?array $relation): string
+    {
+        unset($relation);
+
+        $type = Str::lower($field->type);
+
+        if (in_array($type, ['id', 'increments', 'integer', 'bigincrements', 'bigint', 'biginteger', 'unsignedbiginteger', 'unsignedbigint', 'unsignedinteger'], true)) {
+            return '$table->id();';
+        }
+
+        $rules = $this->parseRules($field->rules ?? null);
+        $default = $field->default ?? null;
+
+        $method = $this->resolveColumnMethod($field);
+        $parameters = $this->resolveColumnParameters($field, $rules);
+        $modifiers = $this->resolveColumnModifiers($field, $rules, false, $default);
+
+        $modifiers = array_values(array_filter($modifiers, static fn (string $modifier): bool => $modifier !== 'nullable()'));
+
+        if (! in_array('primary()', $modifiers, true)) {
+            $modifiers[] = 'primary()';
+        }
+
+        return $this->compileColumn($method, $field->name, $parameters, $modifiers);
     }
 
     /**
@@ -344,7 +390,14 @@ class DatabaseLayerGenerator implements LayerGenerator
         $relatedTable = $target !== '' ? Str::snake(Str::pluralStudly($target)) : Str::snake($field->name);
         $rules = $this->parseRules($field->rules ?? null);
 
-    $method = 'foreignId';
+        $fieldType = Str::lower($field->type);
+
+        $method = match ($fieldType) {
+            'uuid', 'guid' => 'foreignUuid',
+            'ulid' => 'foreignUlid',
+            default => 'foreignId',
+        };
+
         $parameters = [];
         $modifiers = [];
 
@@ -389,6 +442,41 @@ class DatabaseLayerGenerator implements LayerGenerator
         $properties = [];
         $imports = [$modelNamespace];
         $needsStr = false;
+
+        $identifierField = $this->findFieldByName($blueprint, 'id');
+        $autoIncrementIdentifier = true;
+
+        if ($identifierField !== null) {
+            $type = Str::lower($identifierField->type);
+            $autoIncrementIdentifier = in_array($type, [
+                'id',
+                'increments',
+                'mediumincrements',
+                'smallincrements',
+                'integer',
+                'bigincrements',
+                'bigint',
+                'biginteger',
+                'unsignedbiginteger',
+                'unsignedbigint',
+                'unsignedinteger',
+            ], true);
+
+            $rules = $this->parseRules($identifierField->rules ?? null);
+
+            if (array_key_exists('auto_increment', $rules)) {
+                $autoIncrementIdentifier = true;
+            }
+        }
+
+        if ($identifierField !== null && ! $autoIncrementIdentifier) {
+            $value = $this->factoryValueForField($identifierField, null, $needsStr);
+            $properties[] = [
+                'name' => $identifierField->name,
+                'value' => $value['expression'],
+                'is_expression' => $value['is_expression'],
+            ];
+        }
 
         foreach ($blueprint->fields() as $field) {
             if ($field->name === 'id' || in_array($field->name, ['created_at', 'updated_at', 'deleted_at'], true)) {
@@ -537,11 +625,20 @@ class DatabaseLayerGenerator implements LayerGenerator
             ];
         }
 
-        if ($type === 'uuid') {
+        if (in_array($type, ['uuid', 'guid'], true)) {
             $needsStr = true;
 
             return [
                 'expression' => 'Str::uuid()->toString()',
+                'is_expression' => true,
+            ];
+        }
+
+        if ($type === 'ulid') {
+            $needsStr = true;
+
+            return [
+                'expression' => 'Str::ulid()->toBase32()',
                 'is_expression' => true,
             ];
         }
@@ -1433,7 +1530,13 @@ class DatabaseLayerGenerator implements LayerGenerator
             'date' => 'date',
             'datetime' => 'dateTime',
             'json' => 'json',
-            'uuid' => 'uuid',
+            'uuid', 'guid' => 'uuid',
+            'ulid' => 'ulid',
+            'increments' => 'increments',
+            'bigincrements' => 'bigIncrements',
+            'id' => 'id',
+            'unsignedbigint', 'unsignedbiginteger' => 'unsignedBigInteger',
+            'unsignedinteger' => 'unsignedInteger',
             default => 'string',
         };
     }

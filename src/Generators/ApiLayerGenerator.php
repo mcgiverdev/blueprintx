@@ -776,11 +776,26 @@ class ApiLayerGenerator implements LayerGenerator
         $namespace = trim($resourceNamespace, '\\');
 
         foreach ($includesConfig as $definition) {
-            if (! is_array($definition) || ! isset($definition['relation'])) {
+            $relationName = null;
+            $alias = null;
+            $resourceOverride = null;
+
+            if (is_string($definition)) {
+                $relationName = Str::camel($definition);
+                $alias = $definition;
+            } elseif (is_array($definition)) {
+                if (! isset($definition['relation'])) {
+                    continue;
+                }
+
+                $relationName = Str::camel((string) $definition['relation']);
+                $alias = $definition['alias'] ?? $definition['relation'];
+                if (isset($definition['resource']) && is_string($definition['resource']) && $definition['resource'] !== '') {
+                    $resourceOverride = trim($definition['resource'], '\\');
+                }
+            } else {
                 continue;
             }
-
-            $relationName = Str::camel((string) $definition['relation']);
 
             if ($relationName === '') {
                 continue;
@@ -792,41 +807,54 @@ class ApiLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            if ($relation['type'] !== 'belongsto') {
+            $alias = is_string($alias) && $alias !== '' ? $alias : $relation['method'];
+
+            $resourceFqcn = $resourceOverride;
+
+            if (in_array($relation['type'], ['belongsto', 'hasone'], true)) {
+                if ($resourceFqcn === null) {
+                    $resourceFqcn = $this->guessResourceFqcn($namespace, $relation['target']);
+                }
+
+                if ($resourceFqcn === null) {
+                    continue;
+                }
+
+                $resourceClass = Str::afterLast($resourceFqcn, '\\');
+
+                $items[] = [
+                    'property' => $alias,
+                    'relation' => $relation['method'],
+                    'resource_class' => $resourceClass,
+                    'expression' => sprintf('%s::make($this->whenLoaded(\'%s\'))', $resourceClass, $relation['method']),
+                ];
+
+                if (! in_array($resourceFqcn, $imports, true)) {
+                    $imports[] = $resourceFqcn;
+                }
+            } elseif (in_array($relation['type'], ['hasmany', 'belongstomany'], true)) {
+                if ($resourceFqcn === null) {
+                    $resourceFqcn = $this->guessCollectionFqcn($namespace, $relation['target']);
+                }
+
+                if ($resourceFqcn === null) {
+                    continue;
+                }
+
+                $resourceClass = Str::afterLast($resourceFqcn, '\\');
+
+                $items[] = [
+                    'property' => $alias,
+                    'relation' => $relation['method'],
+                    'resource_class' => $resourceClass,
+                    'expression' => sprintf('%s::make($this->whenLoaded(\'%s\'))', $resourceClass, $relation['method']),
+                ];
+
+                if (! in_array($resourceFqcn, $imports, true)) {
+                    $imports[] = $resourceFqcn;
+                }
+            } else {
                 continue;
-            }
-
-            $alias = $definition['alias'] ?? $relationName;
-
-            if (! is_string($alias) || ($alias = trim($alias)) === '') {
-                $alias = $relationName;
-            }
-
-            $resourceFqcn = null;
-
-            if (isset($definition['resource']) && is_string($definition['resource']) && $definition['resource'] !== '') {
-                $resourceFqcn = trim($definition['resource'], '\\');
-            }
-
-            if ($resourceFqcn === null) {
-                $resourceFqcn = $this->guessResourceFqcn($namespace, $relation['target']);
-            }
-
-            if ($resourceFqcn === null) {
-                continue;
-            }
-
-            $resourceClass = Str::afterLast($resourceFqcn, '\\');
-
-            $items[] = [
-                'property' => $alias,
-                'relation' => $relation['method'],
-                'resource_class' => $resourceClass,
-                'expression' => sprintf('%s::make($this->whenLoaded(\'%s\'))', $resourceClass, $relation['method']),
-            ];
-
-            if (! in_array($resourceFqcn, $imports, true)) {
-                $imports[] = $resourceFqcn;
             }
 
             if (! in_array($relation['method'], $includes, true)) {
@@ -859,10 +887,7 @@ class ApiLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            $method = match ($type) {
-                'belongsto' => Str::camel($target),
-                default => null,
-            };
+            $method = $this->deriveRelationMethod($relation);
 
             if ($method === null || $method === '') {
                 continue;
@@ -889,6 +914,59 @@ class ApiLayerGenerator implements LayerGenerator
         $class = Str::studly($target) . 'Resource';
 
         return $namespace . '\\' . $class;
+    }
+
+    private function guessCollectionFqcn(string $resourceNamespace, string $target): ?string
+    {
+        $namespace = trim($resourceNamespace, '\\');
+
+        if ($namespace === '') {
+            return null;
+        }
+
+        $class = Str::studly($target) . 'Collection';
+
+        return $namespace . '\\' . $class;
+    }
+
+    private function deriveRelationMethod(Relation $relation): ?string
+    {
+        $type = strtolower($relation->type);
+        $target = $relation->target;
+
+        return match ($type) {
+            'belongsto', 'hasone' => $this->deriveBelongsToMethodName($relation, $target),
+            'hasmany', 'belongstomany' => Str::camel(Str::plural($target)),
+            default => null,
+        };
+    }
+
+    private function deriveBelongsToMethodName(Relation $relation, string $target): string
+    {
+        $candidate = $this->normalizeRelationField($relation->field);
+
+        if ($candidate !== null) {
+            return Str::camel($candidate);
+        }
+
+        return Str::camel($target);
+    }
+
+    private function normalizeRelationField(?string $field): ?string
+    {
+        if ($field === null || $field === '') {
+            return null;
+        }
+
+        $normalized = preg_replace('/_(id|uuid|ulid|guid)$/', '', $field);
+        $normalized = preg_replace('/_fk$/', '', $normalized ?? '');
+        $normalized = trim((string) $normalized, '_');
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        return $normalized;
     }
 
     private function formatArrayLiteral(array $values): string

@@ -7,14 +7,24 @@
 #}
 <?php
 
-namespace {{ namespaces.domain_models|default('App\Domain\Models') }};
+namespace {{ namespaces.domain_models|default('App\\Domain\\Models') }};
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 {% set modelMeta = model|default({}) %}
+{% set identifier = modelMeta.identifier|default({}) %}
+{% set identifierColumnType = identifier.column_type|default(null) %}
+{% set usesUuidTrait = identifierColumnType in ['uuid', 'guid'] %}
+{% set usesUlidTrait = identifierColumnType == 'ulid' %}
 {% set relationReturnTypes = modelMeta.relation_return_types|default([]) %}
 {% set relationImports = modelMeta.relation_imports|default([]) %}
 {% set softDeletes = modelMeta.soft_deletes|default(false) %}
+{% if usesUuidTrait %}
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+{% endif %}
+{% if usesUlidTrait %}
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
+{% endif %}
 {% for returnType in relationReturnTypes %}
 use Illuminate\Database\Eloquent\Relations\{{ returnType }};
 {% endfor %}
@@ -28,6 +38,12 @@ use {{ import }};
 class {{ entity.name|default('Sample')|studly }} extends Model
 {
     use HasFactory;
+{% if usesUuidTrait %}
+    use HasUuids;
+{% endif %}
+{% if usesUlidTrait %}
+    use HasUlids;
+{% endif %}
 {% if softDeletes %}
     use SoftDeletes;
 {% endif %}
@@ -56,6 +72,14 @@ class {{ entity.name|default('Sample')|studly }} extends Model
 {% endfor %}
     ];
 
+{% if identifier.auto_increment is defined and not identifier.auto_increment %}
+    public $incrementing = false;
+
+{% endif %}
+{% if identifier.key_type is defined and identifier.key_type %}
+    protected $keyType = '{{ identifier.key_type }}';
+
+{% endif %}
 {% if not (modelMeta.timestamps|default(true)) %}
     public $timestamps = false;
 

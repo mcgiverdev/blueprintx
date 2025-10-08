@@ -5,12 +5,22 @@ namespace {{ namespaces.tests|default('Tests\Feature') }};
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 use {{ entity.class|default('App\\Domain\\Sample\\Models\\Sample') }};
-{% for relation in relations %}use {{ relation.import }};
+{% for import in relation_imports %}use {{ import }};
 {% endfor %}
 
 class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->withoutMiddleware([
+            \Illuminate\Auth\Middleware\Authenticate::class,
+            'role',
+        ]);
+    }
 
     public function test_index_returns_paginated_list(): void
     {

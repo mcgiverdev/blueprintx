@@ -118,6 +118,59 @@ class DatabaseLayerGeneratorTest extends TestCase
         $this->assertStringContainsString("'category_id' => Category::factory()", $factory->contents);
     }
 
+    public function test_it_generates_uuid_primary_and_foreign_keys(): void
+    {
+        $engine = $this->makeTemplateEngine();
+        $driver = $this->makeHexagonalDriver();
+        $this->registerDriverNamespaces($engine, $driver);
+
+        $generator = new DatabaseLayerGenerator($engine);
+        $blueprint = Blueprint::fromArray([
+            'path' => 'blueprints/crm/contact.yaml',
+            'module' => 'crm',
+            'entity' => 'Contact',
+            'table' => 'contacts',
+            'architecture' => 'hexagonal',
+            'fields' => [
+                ['name' => 'id', 'type' => 'uuid'],
+                ['name' => 'tenant_id', 'type' => 'uuid', 'rules' => 'required|uuid|exists:tenants,id'],
+                ['name' => 'owner_id', 'type' => 'uuid', 'rules' => 'nullable|uuid|exists:users,id'],
+                ['name' => 'email', 'type' => 'string', 'rules' => 'required|email|max:120|unique:contacts,email'],
+            ],
+            'relations' => [
+                ['type' => 'belongsTo', 'target' => 'Tenant', 'field' => 'tenant_id'],
+                ['type' => 'belongsTo', 'target' => 'User', 'field' => 'owner_id'],
+            ],
+            'options' => [
+                'timestamps' => true,
+            ],
+            'api' => [
+                'base_path' => '/crm/contacts',
+                'middleware' => [],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [],
+        ]);
+
+        $result = $generator->generate($blueprint, $driver);
+
+        $migration = $this->findMigrationFile($result->files(), 'contacts');
+
+        $this->assertNotNull($migration, 'Se esperaba una migración generada.');
+
+    $this->assertStringContainsString("\$table->uuid('id')->primary();", $migration->contents);
+    $this->assertStringContainsString("\$table->foreignUuid('tenant_id')->constrained('tenants')->cascadeOnDelete();", $migration->contents);
+    $this->assertStringContainsString("\$table->foreignUuid('owner_id')->nullable()->constrained('users');", $migration->contents);
+
+        $factory = $this->findFileBySuffix($result->files(), 'database/factories/Domain/Crm/Models/ContactFactory.php');
+
+        $this->assertNotNull($factory, 'Se esperaba una factory generada.');
+        $this->assertStringContainsString("'id' => Str::uuid()->toString()", $factory->contents);
+        $this->assertStringContainsString('use Illuminate\\Support\\Str;', $factory->contents);
+    }
+
     private function makeTemplateEngine(): TemplateEngine
     {
         return new TemplateEngine([], ['debug' => false, 'cache' => false]);

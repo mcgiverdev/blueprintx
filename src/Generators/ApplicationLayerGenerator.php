@@ -59,6 +59,10 @@ class ApplicationLayerGenerator implements LayerGenerator
                 'template' => sprintf('@%s/application/queries/filter.stub.twig', $driver->name()),
                 'path' => $paths['filter'],
             ],
+            [
+                'template' => sprintf('@%s/application/shared/query_filter.stub.twig', $driver->name()),
+                'path' => $paths['shared_filter'],
+            ],
         ];
 
         foreach ($templates as $item) {
@@ -129,6 +133,7 @@ class ApplicationLayerGenerator implements LayerGenerator
             'commands' => $root . '\\Commands',
             'queries' => $root . '\\Queries',
             'filters' => $root . '\\Queries\\Filters',
+            'shared_filters' => $base . '\\Shared\\Filters',
         ];
     }
 
@@ -138,7 +143,8 @@ class ApplicationLayerGenerator implements LayerGenerator
      */
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
-        $basePath = rtrim($options['paths']['application'] ?? 'app/Application', '/');
+    $basePath = rtrim($options['paths']['application'] ?? 'app/Application', '/');
+    $sharedBasePath = rtrim($options['paths']['application_shared'] ?? ($basePath . '/Shared'), '/');
         $module = $this->moduleSegment($blueprint);
         $entityName = Str::studly($blueprint->entity());
         $entityPlural = Str::pluralStudly($entityName);
@@ -156,6 +162,7 @@ class ApplicationLayerGenerator implements LayerGenerator
             'list_query' => sprintf('%s/Queries/List%sQuery.php', $root, $entityPlural),
             'show_query' => sprintf('%s/Queries/Show%sQuery.php', $root, $entityName),
             'filter' => sprintf('%s/Queries/Filters/%sFilter.php', $root, $entityName),
+            'shared_filter' => sprintf('%s/Filters/QueryFilter.php', $sharedBasePath),
         ];
     }
 

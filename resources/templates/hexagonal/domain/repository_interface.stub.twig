@@ -6,9 +6,9 @@
 #}
 <?php
 
-namespace {{ namespaces.domain_repositories|default('App\Domain\Repositories') }};
+namespace {{ namespaces.domain_repositories|default('App\\Domain\\Repositories') }};
 
-use {{ namespaces.domain_models|default('App\Domain\Models') }}\{{ naming.entity_studly|default('Sample') }};
+use {{ namespaces.domain_models|default('App\\Domain\\Models') }}\{{ naming.entity_studly|default('Sample') }};
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 
