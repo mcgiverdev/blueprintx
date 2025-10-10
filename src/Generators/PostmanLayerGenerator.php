@@ -17,7 +17,8 @@ class PostmanLayerGenerator implements LayerGenerator
     public function __construct(
         private readonly OpenApiDocumentBuilder $builder,
         private readonly bool $enabledByDefault = false,
-        private readonly string $defaultBaseUrl = 'http://localhost/api'
+        private readonly string $defaultBaseUrl = 'http://localhost',
+        private readonly string $defaultApiPrefix = '/api'
     ) {
     }
 
@@ -51,7 +52,23 @@ class PostmanLayerGenerator implements LayerGenerator
             $baseUrl = $this->defaultBaseUrl;
         }
 
-        $collection = $this->buildCollection($blueprint, $document, $baseUrl);
+        $apiPrefix = $options['postman']['api_prefix'] ?? $this->defaultApiPrefix;
+        if (! is_string($apiPrefix)) {
+            $apiPrefix = $this->defaultApiPrefix;
+        }
+
+        $normalizedApiPrefix = $this->normalizeApiPrefix($apiPrefix);
+
+        $baseUrl = rtrim($baseUrl, '/');
+        if ($normalizedApiPrefix !== '' && str_ends_with($baseUrl, $normalizedApiPrefix)) {
+            $baseUrl = rtrim(substr($baseUrl, 0, -strlen($normalizedApiPrefix)), '/');
+        }
+
+        if ($baseUrl === '') {
+            $baseUrl = $this->defaultBaseUrl;
+        }
+
+        $collection = $this->buildCollection($blueprint, $document, $baseUrl, $normalizedApiPrefix);
 
         try {
             $contents = json_encode($collection, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
@@ -70,12 +87,15 @@ class PostmanLayerGenerator implements LayerGenerator
     /**
      * @param array<string, mixed> $document
      */
-    private function buildCollection(Blueprint $blueprint, array $document, string $baseUrl): array
+    private function buildCollection(Blueprint $blueprint, array $document, string $baseUrl, string $apiPrefix): array
     {
         $entityName = Str::studly($blueprint->entity());
         $description = $document['info']['description'] ?? null;
 
-        $items = $this->buildItems($document, $entityName, $blueprint);
+        $items = array_merge(
+            [$this->buildAuthGroup($apiPrefix)],
+            $this->buildItems($document, $entityName, $blueprint, $apiPrefix)
+        );
 
         return [
             'info' => array_filter([
@@ -92,6 +112,24 @@ class PostmanLayerGenerator implements LayerGenerator
                     'type' => 'string',
                     'description' => 'URL base usada para las peticiones generadas.',
                 ],
+                [
+                    'key' => 'api_prefix',
+                    'value' => $apiPrefix,
+                    'type' => 'string',
+                    'description' => 'Prefijo API aplicado automáticamente a los endpoints.',
+                ],
+                [
+                    'key' => 'bearer_token',
+                    'value' => '',
+                    'type' => 'string',
+                    'description' => 'Token Bearer capturado desde la petición de login.',
+                ],
+                [
+                    'key' => 'tenant_id',
+                    'value' => '',
+                    'type' => 'string',
+                    'description' => 'UUID del tenant para registrar nuevos usuarios.',
+                ],
             ],
         ];
     }
@@ -100,14 +138,15 @@ class PostmanLayerGenerator implements LayerGenerator
      * @param array<string, mixed> $document
      * @return array<int, array<string, mixed>>
      */
-    private function buildItems(array $document, string $entityName, Blueprint $blueprint): array
+    private function buildItems(array $document, string $entityName, Blueprint $blueprint, string $apiPrefix): array
     {
         $paths = $document['paths'] ?? [];
         if ($paths instanceof \stdClass) {
             $paths = (array) $paths;
         }
 
-        $groups = [];
+    $groups = [];
+    $requiresAuth = $this->requiresAuthentication($blueprint);
 
         foreach ($paths as $path => $operations) {
             if (! is_string($path) || ! is_array($operations)) {
@@ -143,7 +182,15 @@ class PostmanLayerGenerator implements LayerGenerator
                     ];
                 }
 
-                $groups[$groupName]['item'][] = $this->buildItem($httpMethod, $path, $operation, $parameters, $blueprint);
+                $groups[$groupName]['item'][] = $this->buildItem(
+                    $httpMethod,
+                    $path,
+                    $operation,
+                    $parameters,
+                    $blueprint,
+                    $apiPrefix,
+                    $requiresAuth
+                );
             }
         }
 
@@ -179,7 +226,7 @@ class PostmanLayerGenerator implements LayerGenerator
     /**
      * @param array<int, array<string, mixed>> $parameters
      */
-    private function buildItem(string $method, string $path, array $operation, array $parameters, Blueprint $blueprint): array
+    private function buildItem(string $method, string $path, array $operation, array $parameters, Blueprint $blueprint, string $apiPrefix, bool $requiresAuth): array
     {
         $name = $operation['summary'] ?? (strtoupper($method) . ' ' . $path);
         if (! is_string($name) || $name === '') {
@@ -188,17 +235,14 @@ class PostmanLayerGenerator implements LayerGenerator
 
         $description = $operation['description'] ?? null;
         $pathDetails = $this->extractPathSegments($path, $parameters);
+        $urlContext = $this->buildUrlContext($path, $pathDetails, $apiPrefix);
 
         $request = [
             'method' => strtoupper($method),
-            'header' => $this->buildHeaders($method, $parameters),
-            'url' => array_filter([
-                'raw' => '{{base_url}}' . $path,
-                'host' => ['{{base_url}}'],
-                'path' => $pathDetails['segments'],
+            'header' => $this->buildHeaders($method, $parameters, $requiresAuth),
+            'url' => array_filter(array_merge($urlContext, [
                 'query' => $this->buildQueryParams($parameters),
-                'variable' => $this->buildPathVariables($pathDetails['variables']),
-            ], static fn ($value) => $value !== [] && $value !== null),
+            ]), static fn ($value) => $value !== [] && $value !== null),
         ];
 
         if ($description !== null && is_string($description) && $description !== '') {
@@ -274,14 +318,105 @@ class PostmanLayerGenerator implements LayerGenerator
     }
 
     /**
+     * @param array{segments: array<int, string>, variables: array<string, array<string, mixed>>} $pathDetails
+     */
+    private function buildUrlContext(string $path, array $pathDetails, string $apiPrefix): array
+    {
+        $pathAlreadyPrefixed = $this->pathHasPrefix($path, $apiPrefix);
+        $prefixSegments = $pathAlreadyPrefixed ? [] : $this->apiPrefixSegments($apiPrefix);
+        $segments = array_values(array_filter(array_merge($prefixSegments, $pathDetails['segments']), static fn ($segment) => $segment !== ''));
+        $rawPrefix = ($apiPrefix !== '' && ! $pathAlreadyPrefixed) ? '{{api_prefix}}' : '';
+
+        return array_filter([
+            'raw' => '{{base_url}}' . $rawPrefix . $path,
+            'host' => ['{{base_url}}'],
+            'path' => $segments,
+            'variable' => $this->buildPathVariables($pathDetails['variables']),
+        ], static fn ($value) => $value !== [] && $value !== null);
+    }
+
+    private function encodeJson(array $payload): string
+    {
+        try {
+            $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        }
+
+        return is_string($encoded) ? $encoded : '{}';
+    }
+
+    private function normalizeApiPrefix(string $apiPrefix): string
+    {
+        $trimmed = trim($apiPrefix);
+
+        if ($trimmed === '') {
+            return '';
+        }
+
+        $normalized = '/' . ltrim($trimmed, '/');
+
+        return rtrim($normalized, '/');
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function apiPrefixSegments(string $apiPrefix): array
+    {
+        $trimmed = trim($apiPrefix, '/');
+
+        if ($trimmed === '') {
+            return [];
+        }
+
+        return array_values(array_filter(explode('/', $trimmed), static fn ($segment) => $segment !== ''));
+    }
+
+    private function pathHasPrefix(string $path, string $apiPrefix): bool
+    {
+        $prefix = trim($apiPrefix, '/');
+
+        if ($prefix === '') {
+            return false;
+        }
+
+        $normalizedPath = ltrim($path, '/');
+
+        if ($normalizedPath === '') {
+            return false;
+        }
+
+        return str_starts_with($normalizedPath, $prefix . '/') || $normalizedPath === $prefix;
+    }
+
+    private function requiresAuthentication(Blueprint $blueprint): bool
+    {
+        foreach ($blueprint->apiMiddleware() as $middleware) {
+            if (! is_string($middleware)) {
+                continue;
+            }
+
+            $normalized = strtolower(trim($middleware));
+
+            if ($normalized === 'auth' || str_starts_with($normalized, 'auth:')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * @param array<int, array<string, mixed>> $parameters
      * @return array<int, array<string, mixed>>
      */
-    private function buildHeaders(string $method, array $parameters): array
+    private function buildHeaders(string $method, array $parameters, bool $requiresAuth, bool $includeAuthorization = true): array
     {
         $headers = [];
         $hasAccept = false;
         $hasContentType = false;
+        $hasAuthorization = false;
 
         foreach ($parameters as $parameter) {
             if (($parameter['in'] ?? null) !== 'header') {
@@ -296,6 +431,7 @@ class PostmanLayerGenerator implements LayerGenerator
             $lower = strtolower($name);
             $hasAccept = $hasAccept || $lower === 'accept';
             $hasContentType = $hasContentType || $lower === 'content-type';
+            $hasAuthorization = $hasAuthorization || $lower === 'authorization';
 
             $headers[] = array_filter([
                 'key' => $name,
@@ -316,6 +452,13 @@ class PostmanLayerGenerator implements LayerGenerator
             $headers[] = [
                 'key' => 'Content-Type',
                 'value' => 'application/json',
+            ];
+        }
+
+        if ($requiresAuth && $includeAuthorization && ! $hasAuthorization) {
+            $headers[] = [
+                'key' => 'Authorization',
+                'value' => 'Bearer {{bearer_token}}',
             ];
         }
 
@@ -393,6 +536,153 @@ class PostmanLayerGenerator implements LayerGenerator
             'options' => [
                 'raw' => [
                     'language' => 'json',
+                ],
+            ],
+        ];
+    }
+
+    private function buildAuthGroup(string $apiPrefix): array
+    {
+        return [
+            'name' => 'Autenticación',
+            'item' => array_values(array_filter([
+                $this->buildLoginRequest($apiPrefix),
+                $this->buildRegisterRequest($apiPrefix),
+                $this->buildProfileRequest($apiPrefix),
+                $this->buildLogoutRequest($apiPrefix),
+            ])),
+        ];
+    }
+
+    private function buildLoginRequest(string $apiPrefix): array
+    {
+        $path = '/auth/login';
+        $pathDetails = [
+            'segments' => ['auth', 'login'],
+            'variables' => [],
+        ];
+
+        $rawBody = $this->encodeJson([
+            'email' => 'admin@example.com',
+            'password' => 'password',
+            'device_name' => 'postman',
+        ]);
+
+        return array_filter([
+            'name' => 'Login (obtener token)',
+            'request' => [
+                'method' => 'POST',
+                'header' => $this->buildHeaders('post', [], false, false),
+                'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
+                'body' => [
+                    'mode' => 'raw',
+                    'raw' => $rawBody . "\n",
+                    'options' => [
+                        'raw' => ['language' => 'json'],
+                    ],
+                ],
+            ],
+            'event' => [$this->buildLoginTestScript()],
+        ]);
+    }
+
+    private function buildRegisterRequest(string $apiPrefix): array
+    {
+        $path = '/auth/register';
+        $pathDetails = [
+            'segments' => ['auth', 'register'],
+            'variables' => [],
+        ];
+
+        $rawBody = $this->encodeJson([
+            'tenant_id' => '{{tenant_id}}',
+            'email' => 'admin@example.com',
+            'password' => 'password',
+            'password_confirmation' => 'password',
+            'full_name' => 'Demo Admin',
+            'role' => 'admin',
+            'locale' => 'es-ES',
+            'timezone' => 'Europe/Madrid',
+            'device_name' => 'postman',
+        ]);
+
+        return array_filter([
+            'name' => 'Register (crear usuario)',
+            'request' => [
+                'method' => 'POST',
+                'header' => $this->buildHeaders('post', [], false, false),
+                'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
+                'body' => [
+                    'mode' => 'raw',
+                    'raw' => $rawBody . "\n",
+                    'options' => [
+                        'raw' => ['language' => 'json'],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    private function buildProfileRequest(string $apiPrefix): array
+    {
+        $path = '/auth/me';
+        $pathDetails = [
+            'segments' => ['auth', 'me'],
+            'variables' => [],
+        ];
+
+        return array_filter([
+            'name' => 'Perfil actual',
+            'request' => [
+                'method' => 'GET',
+                'header' => $this->buildHeaders('get', [], true),
+                'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
+            ],
+        ]);
+    }
+
+    private function buildLogoutRequest(string $apiPrefix): array
+    {
+        $path = '/auth/logout';
+        $pathDetails = [
+            'segments' => ['auth', 'logout'],
+            'variables' => [],
+        ];
+
+        return array_filter([
+            'name' => 'Logout (revocar token)',
+            'request' => [
+                'method' => 'POST',
+                'header' => $this->buildHeaders('post', [], true),
+                'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
+            ],
+        ]);
+    }
+
+    private function buildLoginTestScript(): array
+    {
+        return [
+            'listen' => 'test',
+            'script' => [
+                'type' => 'text/javascript',
+                'exec' => [
+                    'if (!pm.response) {',
+                    '  pm.test("Sin respuesta de login", function () { pm.expect(false).to.be.true; });',
+                    '  return;',
+                    '}',
+                    'let token = null;',
+                    'try {',
+                    '  const data = pm.response.json();',
+                    '  token = data.token || data.access_token || (data.data && (data.data.token || data.data.access_token));',
+                    '} catch (error) {',
+                    '  console.warn("No se pudo parsear la respuesta JSON", error);',
+                    '}',
+                    'if (token) {',
+                    '  pm.collectionVariables.set("bearer_token", token);',
+                    '  pm.test("Bearer token capturado", function () { pm.expect(token).to.be.a("string"); });',
+                    '} else {',
+                    '  pm.test("Token no encontrado en la respuesta", function () { pm.expect(false, "Incluye un campo token o access_token en la respuesta").to.be.true; });',
+                    '}',
                 ],
             ],
         ];

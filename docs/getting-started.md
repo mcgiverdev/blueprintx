@@ -33,6 +33,54 @@ php artisan vendor:publish --provider="BlueprintX\BlueprintXServiceProvider" --t
 
 Los archivos quedarán en `resources/vendor/blueprintx/templates` y tendrán prioridad sobre los que trae el paquete.
 
+### Habilitar Laravel Sanctum
+
+BlueprintX genera APIs aseguradas con `auth:sanctum`. Asegúrate de instalar y configurar Sanctum en tu proyecto:
+
+```bash
+composer require laravel/sanctum
+php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+php artisan migrate
+```
+
+En Laravel 11/12 con bootstrap minimal agrega el guard `sanctum` en `config/auth.php` si aún no existe:
+
+```php
+'guards' => [
+  'web' => [
+    'driver' => 'session',
+    'provider' => 'users',
+  ],
+  'sanctum' => [
+    'driver' => 'sanctum',
+    'provider' => 'users',
+  ],
+],
+```
+
+Y en `bootstrap/app.php` añade el middleware stateful al grupo `api` (solo cuando Sanctum esté disponible):
+
+```php
+->withMiddleware(function (Middleware $middleware): void {
+  if (class_exists('Laravel\\Sanctum\\Http\\Middleware\\EnsureFrontendRequestsAreStateful')) {
+    $middleware->appendToGroup('api', [
+      'Laravel\\Sanctum\\Http\\Middleware\\EnsureFrontendRequestsAreStateful',
+    ]);
+  }
+})
+```
+
+Esto habilita la autenticación Bearer esperada por los controladores y la colección Postman generada.
+
+#### Usuarios semilla y autenticación
+
+Al ejecutar `php artisan migrate:fresh --seed`, BlueprintX registra un usuario administrador de ejemplo (`admin@example.com` / `password`).
+Los endpoints REST `/auth/login`, `/auth/register`, `/auth/logout` y `/auth/me` quedan disponibles de inmediato y la colección Postman exportada incluye las peticiones necesarias para trabajar con tokens Sanctum.
+
+El flujo recomendado es:
+- Hacer login con el admin semilla para obtener el token Sanctum.
+- Consumir el resto de endpoints pasando el header `Authorization: Bearer {{bearer_token}}`.
+
 ## Configuración mínima
 
 Asegúrate de que `config/blueprintx.paths.blueprints` apunte al directorio donde guardarás los YAML. Por defecto es `base_path('blueprints')`.

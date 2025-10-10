@@ -61,9 +61,14 @@ SIGNATURE;
         $defaultOpenApiValidation = array_key_exists('validate', $featureConfig) ? (bool) $featureConfig['validate'] : true;
         $postmanFeature = $config['features']['postman'] ?? [];
         $defaultPostmanEnabled = (bool) ($postmanFeature['enabled'] ?? false);
-        $defaultPostmanBaseUrl = $postmanFeature['base_url'] ?? 'http://localhost/api';
-        if (! is_string($defaultPostmanBaseUrl) || $defaultPostmanBaseUrl === '') {
-            $defaultPostmanBaseUrl = 'http://localhost/api';
+        $defaultPostmanBaseUrl = $postmanFeature['base_url'] ?? 'http://localhost';
+        if (! is_string($defaultPostmanBaseUrl) || trim($defaultPostmanBaseUrl) === '') {
+            $defaultPostmanBaseUrl = 'http://localhost';
+        }
+
+        $defaultPostmanApiPrefix = $postmanFeature['api_prefix'] ?? '/api';
+        if (! is_string($defaultPostmanApiPrefix)) {
+            $defaultPostmanApiPrefix = '/api';
         }
 
         $pathsConfig = $config['paths'] ?? [];
@@ -131,6 +136,9 @@ SIGNATURE;
         $validateOpenApi = $skipOpenApiValidation ? false : ($validateOpenApiOption ? true : $defaultOpenApiValidation);
         $withPostman = $withPostmanOption ? true : ($withoutPostmanOption ? false : $defaultPostmanEnabled);
 
+    $sanctumInstalled = class_exists('Laravel\\Sanctum\\Sanctum');
+    $sanctumSuggestionShown = false;
+
         $blueprintPaths = $this->locator->discover($blueprintsPath, $module, $entity);
 
         if ($blueprintPaths === []) {
@@ -179,6 +187,14 @@ SIGNATURE;
                 $this->line(sprintf('  > Arquitectura forzada a "%s".', $architectureOverride));
             }
 
+            if (! $sanctumInstalled && ! $sanctumSuggestionShown && $this->blueprintRequiresSanctum($blueprint)) {
+                $this->warn('  No se detectó Laravel Sanctum, requerido por el middleware auth:sanctum.');
+                $this->line('    composer require laravel/sanctum');
+                $this->line('    php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"');
+                $this->line('    php artisan migrate');
+                $sanctumSuggestionShown = true;
+            }
+
             try {
                 $validation = $this->validator->validate($blueprint);
             } catch (BlueprintValidationException $exception) {
@@ -225,6 +241,7 @@ SIGNATURE;
                 ],
                 'postman' => [
                     'base_url' => $defaultPostmanBaseUrl,
+                    'api_prefix' => $defaultPostmanApiPrefix,
                 ],
             ];
 
@@ -389,6 +406,23 @@ SIGNATURE;
         }
 
         return '';
+    }
+
+    private function blueprintRequiresSanctum(Blueprint $blueprint): bool
+    {
+        foreach ($blueprint->apiMiddleware() as $middleware) {
+            if (! is_string($middleware)) {
+                continue;
+            }
+
+            $normalized = strtolower(trim($middleware));
+
+            if ($normalized === 'auth:sanctum' || str_contains($normalized, 'sanctum')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function overrideArchitecture(Blueprint $blueprint, string $architecture): Blueprint

@@ -4,6 +4,13 @@ title: Historial de versiones
 nav_order: 99
 ---
 
+## 1.1.0 · 2025-10-10
+
+- Añade scaffolding de autenticación con Laravel Sanctum, incluyendo controlador REST, requests validadas y rutas `login/register/logout/me` preconfiguradas.
+- La entidad `User` ahora soporta contraseñas hasheadas, tokens personales y atributos estándar (`email_verified_at`, `remember_token`).
+- Seeders y factories generan un usuario administrador de ejemplo (`admin@example.com` / `password`) para facilitar las pruebas de login.
+- La colección Postman integra endpoints de autenticación actualizados y variables para gestionar credenciales semilla durante el registro.
+
 ## 1.0.2 · 2025-10-15
 
 - Añade un generador de colecciones Postman que reutiliza la especificación OpenAPI para construir peticiones con cabeceras, parámetros y cuerpos de ejemplo.

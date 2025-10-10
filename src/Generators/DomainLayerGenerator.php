@@ -19,6 +19,11 @@ class DomainLayerGenerator implements LayerGenerator
     {
     }
 
+    private function isPasswordField(Field $field): bool
+    {
+        return $field->name === 'password';
+    }
+
     public function layer(): string
     {
         return 'domain';
@@ -32,7 +37,7 @@ class DomainLayerGenerator implements LayerGenerator
         $result = new GenerationResult();
 
         $paths = $this->derivePaths($blueprint, $options);
-    $context = $this->buildContext($blueprint, $driver, $options, $paths);
+        $context = $this->buildContext($blueprint, $driver, $options, $paths);
 
         $templates = [
             [
@@ -217,6 +222,8 @@ class DomainLayerGenerator implements LayerGenerator
     {
         $fillable = [];
         $casts = [];
+        $hidden = [];
+        $hasPasswordField = false;
         $identifierField = 'id';
         $identifierPhpType = 'int';
         $identifierColumnType = 'increments';
@@ -269,6 +276,11 @@ class DomainLayerGenerator implements LayerGenerator
             if ($cast !== null) {
                 $casts[$field->name] = $cast;
             }
+
+            if ($this->isPasswordField($field)) {
+                $hidden[] = $field->name;
+                $hasPasswordField = true;
+            }
         }
 
         $options = $blueprint->options();
@@ -288,6 +300,7 @@ class DomainLayerGenerator implements LayerGenerator
 
         $fillable = array_values(array_unique($fillable));
         ksort($casts);
+        $hidden = array_values(array_unique($hidden));
 
         if ($identifierPhpType === 'mixed') {
             $identifierPhpType = 'int|string';
@@ -360,11 +373,13 @@ class DomainLayerGenerator implements LayerGenerator
         return [
             'fillable' => $fillable,
             'casts' => $casts,
+            'hidden' => $hidden,
             'soft_deletes' => $softDeletes,
             'timestamps' => $timestampsEnabled,
             'relation_return_types' => $relationReturnTypes,
             'relation_imports' => $relationImports,
             'relations' => $relations,
+            'has_password_field' => $hasPasswordField,
             'identifier' => [
                 'field' => $identifierField,
                 'php_type' => $identifierPhpType,
