@@ -31,6 +31,7 @@ php artisan vendor:publish --provider="BlueprintX\BlueprintXServiceProvider" --t
 | `api` | `app/Http/Controllers/Api` | Carpeta relativa para controladores HTTP. |
 | `api_requests` | `app/Http/Requests/Api` | Carpeta relativa para Form Requests. |
 | `api_resources` | `app/Http/Resources` | Carpeta relativa para `JsonResource`. |
+| `postman` | `docs/postman` | Directorio donde se exportarán las colecciones Postman. |
 
 ## Arquitecturas y generadores
 
@@ -88,6 +89,17 @@ La sección `features.openapi` habilita la generación de documentación OpenAPI
 | `schema_path` | `string\|null` | Ruta a un JSON Schema alternativo para validar el resultado. |
 
 Estas opciones admiten variables de entorno: `BLUEPRINTX_OPENAPI_VALIDATION_MODE` y `BLUEPRINTX_OPENAPI_SCHEMA`.
+
+## Colecciones Postman
+
+La sección `features.postman` controla la exportación automática de colecciones compatibles con Postman:
+
+| Clave | Tipo | Descripción |
+|-------|------|-------------|
+| `enabled` | bool | Genera una colección `.postman.json` junto con el resto de capas. |
+| `base_url` | string | Valor inicial de la variable `{{base_url}}` dentro de la colección. |
+
+Puedes forzar u omitir la generación desde la CLI usando `--with-postman` o `--without-postman`. El archivo se escribe en la ruta configurada en `paths.postman`, agrupando las peticiones por tag o segmento principal del blueprint.
 
 ## Generación de pruebas
 

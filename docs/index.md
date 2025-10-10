@@ -14,6 +14,7 @@ BlueprintX es un generador de código para proyectos Laravel que parte de archiv
 - **Filtros reutilizables**: genera automáticamente `App\Application\Shared\Filters\QueryFilter`, una base extensible con búsqueda, ordenamientos e includes controlados.
 - **Personalización flexible**: publica la configuración y las plantillas Twig para ajustar rutas de salida, namespaces, traits de controladores y bloqueo optimista.
 - **Recursos expresivos**: los `JsonResource` generados respetan `api.resources.includes`, cargan relaciones `belongsTo`, `hasOne`, colecciones y aplican alias declarados en el blueprint.
+- **Colecciones listas para pruebas**: exporta colecciones Postman a partir del blueprint, reutilizando los metadatos de OpenAPI para poblar parámetros, cabeceras y cuerpos de ejemplo.
 - **Integración Laravel nativa**: registra comandos Artisan (`blueprintx:list`, `validate`, `generate`), servicio singleton para parseo YAML y un pipeline de generación extensible.
 
 ## Cómo usar esta documentación
@@ -35,6 +36,7 @@ BlueprintX utiliza el `GenerationPipeline` para ejecutar los generadores registr
 - **Base de datos**: migraciones y seeders opcionales.
 - **Pruebas**: escenarios de validación API, incluyendo bloqueo optimista cuando corresponde.
 - **Documentación**: documento OpenAPI (si `features.openapi.enabled` está activo) con ejemplos derivados del blueprint.
+- **Postman**: colección `.postman.json` con variables, peticiones y ejemplos basados en el blueprint y la especificación OpenAPI.
 
 ## Recursos
 

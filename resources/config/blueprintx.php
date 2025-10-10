@@ -8,6 +8,7 @@ return [
         'api' => 'app/Http/Controllers/Api',
         'api_requests' => 'app/Http/Requests/Api',
         'api_resources' => 'app/Http/Resources',
+    'postman' => 'docs/postman',
     ],
 
     'default_architecture' => 'hexagonal',
@@ -58,6 +59,10 @@ return [
             'validation_mode' => env('BLUEPRINTX_OPENAPI_VALIDATION_MODE', 'official'),
             'schema_path' => env('BLUEPRINTX_OPENAPI_SCHEMA'),
         ],
+        'postman' => [
+            'enabled' => env('BLUEPRINTX_POSTMAN_ENABLED', false),
+            'base_url' => env('BLUEPRINTX_POSTMAN_BASE_URL', 'http://localhost/api'),
+        ],
     ],
 
     'generators' => [
@@ -68,5 +73,6 @@ return [
         'database' => BlueprintX\Generators\DatabaseLayerGenerator::class,
         'tests' => BlueprintX\Generators\TestsLayerGenerator::class,
         'docs' => BlueprintX\Generators\DocsLayerGenerator::class,
+        'postman' => BlueprintX\Generators\PostmanLayerGenerator::class,
     ],
 ];

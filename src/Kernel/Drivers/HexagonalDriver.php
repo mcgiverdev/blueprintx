@@ -28,6 +28,7 @@ class HexagonalDriver implements ArchitectureDriver
             'database',
             'tests',
             'docs',
+            'postman',
         ];
     }
 

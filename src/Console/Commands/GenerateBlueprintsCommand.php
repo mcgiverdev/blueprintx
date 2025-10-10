@@ -30,7 +30,9 @@ class GenerateBlueprintsCommand extends Command
         {--with-openapi : Fuerza la generación del documento OpenAPI}
         {--without-openapi : Omite la generación del documento OpenAPI}
         {--validate-openapi : Fuerza la validación del documento OpenAPI}
-        {--skip-openapi-validation : Omite la validación del documento OpenAPI}
+    {--skip-openapi-validation : Omite la validación del documento OpenAPI}
+    {--with-postman : Fuerza la generación de la colección de Postman}
+    {--without-postman : Omite la generación de la colección de Postman}
 SIGNATURE;
 
     protected $description = 'Genera artefactos a partir de blueprints YAML usando el pipeline configurado.';
@@ -57,6 +59,12 @@ SIGNATURE;
         $featureConfig = $config['features']['openapi'] ?? [];
         $defaultOpenApiEnabled = (bool) ($featureConfig['enabled'] ?? false);
         $defaultOpenApiValidation = array_key_exists('validate', $featureConfig) ? (bool) $featureConfig['validate'] : true;
+        $postmanFeature = $config['features']['postman'] ?? [];
+        $defaultPostmanEnabled = (bool) ($postmanFeature['enabled'] ?? false);
+        $defaultPostmanBaseUrl = $postmanFeature['base_url'] ?? 'http://localhost/api';
+        if (! is_string($defaultPostmanBaseUrl) || $defaultPostmanBaseUrl === '') {
+            $defaultPostmanBaseUrl = 'http://localhost/api';
+        }
 
         $pathsConfig = $config['paths'] ?? [];
         $formRequestFeature = $config['features']['api']['form_requests'] ?? [];
@@ -64,6 +72,7 @@ SIGNATURE;
         $apiControllersPath = $this->normalizeRelativePath($pathsConfig['api'] ?? null, 'app/Http/Controllers/Api');
         $defaultRequestsPath = $this->normalizeRelativePath($pathsConfig['api_requests'] ?? null, 'app/Http/Requests/Api');
         $formRequestsPath = $this->normalizeRelativePath($formRequestFeature['path'] ?? null, $defaultRequestsPath);
+        $postmanOutputPath = $this->normalizeRelativePath($pathsConfig['postman'] ?? null, 'docs/postman');
 
         $formRequestsEnabled = array_key_exists('enabled', $formRequestFeature)
             ? (bool) $formRequestFeature['enabled']
@@ -97,6 +106,8 @@ SIGNATURE;
         $withoutOpenApiOption = (bool) $this->option('without-openapi');
         $validateOpenApiOption = (bool) $this->option('validate-openapi');
         $skipOpenApiValidation = (bool) $this->option('skip-openapi-validation');
+        $withPostmanOption = (bool) $this->option('with-postman');
+        $withoutPostmanOption = (bool) $this->option('without-postman');
 
         if ($withOpenApiOption && $withoutOpenApiOption) {
             $this->error('No se puede usar "--with-openapi" junto con "--without-openapi".');
@@ -110,8 +121,15 @@ SIGNATURE;
             return self::FAILURE;
         }
 
+        if ($withPostmanOption && $withoutPostmanOption) {
+            $this->error('No se puede usar "--with-postman" junto con "--without-postman".');
+
+            return self::FAILURE;
+        }
+
         $withOpenApi = $withOpenApiOption ? true : ($withoutOpenApiOption ? false : $defaultOpenApiEnabled);
         $validateOpenApi = $skipOpenApiValidation ? false : ($validateOpenApiOption ? true : $defaultOpenApiValidation);
+        $withPostman = $withPostmanOption ? true : ($withoutPostmanOption ? false : $defaultPostmanEnabled);
 
         $blueprintPaths = $this->locator->discover($blueprintsPath, $module, $entity);
 
@@ -193,15 +211,20 @@ SIGNATURE;
                 'force' => $force,
                 'with_openapi' => $withOpenApi,
                 'validate_openapi' => $validateOpenApi,
+                'with_postman' => $withPostman,
                 'paths' => [
                     'api' => $apiControllersPath,
                     'api_requests' => $defaultRequestsPath,
+                    'postman' => $postmanOutputPath,
                 ],
                 'form_requests' => [
                     'enabled' => $formRequestsEnabled,
                     'namespace' => $requestsNamespace,
                     'path' => $formRequestsPath,
                     'authorize_by_default' => $authorizeByDefault,
+                ],
+                'postman' => [
+                    'base_url' => $defaultPostmanBaseUrl,
                 ],
             ];
 

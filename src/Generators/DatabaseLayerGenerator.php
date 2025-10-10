@@ -211,25 +211,31 @@ class DatabaseLayerGenerator implements LayerGenerator
         $key = $this->historyKey($blueprint);
 
         if (isset($history['migrations'][$key]['prefix'])) {
-            return $history['migrations'][$key]['prefix'];
+            $prefix = (string) $history['migrations'][$key]['prefix'];
+            $path = $this->migrationAbsolutePath($prefix, $blueprint, $options);
+
+            $prefix = $this->ensurePrefixOrder($blueprint, $prefix, $path, $options, false);
+
+            $this->updateLastGeneratedTimestamp($prefix);
+            $this->storeMigrationHistory($blueprint, $prefix);
+
+            return $prefix;
         }
 
         $existing = $this->findExistingMigration($blueprint, $options);
 
         if ($existing !== null) {
-            if ($existing['style'] === 'legacy') {
-                $newPrefix = $this->generateNextTimestamp();
-                $renamedPrefix = $this->renameMigrationFile(
-                    $existing['path'],
-                    $newPrefix,
-                    $this->tableName($blueprint)
-                );
+            $prefix = $existing['prefix'];
 
-                $prefix = $renamedPrefix ?? $newPrefix;
-            } else {
-                $prefix = $existing['prefix'];
-                $this->lastGeneratedTimestamp = $prefix;
-            }
+            $prefix = $this->ensurePrefixOrder(
+                $blueprint,
+                $prefix,
+                $existing['path'],
+                $options,
+                $existing['style'] === 'legacy'
+            );
+
+            $this->updateLastGeneratedTimestamp($prefix);
 
             $this->storeMigrationHistory($blueprint, $prefix);
 
@@ -237,6 +243,7 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         $prefix = $this->generateNextTimestamp();
+        $this->updateLastGeneratedTimestamp($prefix);
         $this->storeMigrationHistory($blueprint, $prefix);
 
         return $prefix;
@@ -251,6 +258,175 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         return $table;
+    }
+
+    private function migrationAbsolutePath(string $prefix, Blueprint $blueprint, array $options): string
+    {
+        $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
+        $absoluteRoot = $this->toAbsolutePath($migrationsRoot);
+
+        return $absoluteRoot . DIRECTORY_SEPARATOR . $prefix . '_create_' . $this->tableName($blueprint) . '_table.php';
+    }
+
+    private function ensurePrefixOrder(
+        Blueprint $blueprint,
+        string $currentPrefix,
+        string $path,
+        array $options,
+        bool $forceRename
+    ): string {
+        if ($forceRename) {
+            $newPrefix = $this->generateNextTimestamp();
+            $renamed = $this->renameMigrationFile($path, $newPrefix, $this->tableName($blueprint));
+
+            return $renamed ?? $newPrefix;
+        }
+
+        $dependencies = $this->dependentMigrationPrefixes($blueprint, $options);
+
+        $threshold = null;
+
+        if ($dependencies !== []) {
+            $threshold = max($dependencies);
+        }
+
+        if ($threshold !== null && $currentPrefix <= $threshold) {
+            $desired = $this->incrementTimestamp($threshold);
+            $renamed = $this->renameMigrationFile($path, $desired, $this->tableName($blueprint));
+
+            return $renamed ?? $desired;
+        }
+
+        return $currentPrefix;
+    }
+
+    private function updateLastGeneratedTimestamp(string $prefix): void
+    {
+        if ($this->lastGeneratedTimestamp === null || $prefix > $this->lastGeneratedTimestamp) {
+            $this->lastGeneratedTimestamp = $prefix;
+        }
+    }
+
+    private function incrementTimestamp(string $timestamp): string
+    {
+        try {
+            return Carbon::createFromFormat('Y_m_d_His', $timestamp)
+                ->addSecond()
+                ->format('Y_m_d_His');
+        } catch (\Throwable) {
+            return Carbon::now()->addSecond()->format('Y_m_d_His');
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<int, string>
+     */
+    private function dependentMigrationPrefixes(Blueprint $blueprint, array $options): array
+    {
+        $tables = [];
+
+        foreach ($blueprint->relations() as $relation) {
+            if (strtolower($relation->type) !== 'belongsto') {
+                continue;
+            }
+
+            $target = $relation->target;
+
+            if (! is_string($target) || $target === '') {
+                continue;
+            }
+
+            $tables[] = Str::snake(Str::pluralStudly($target));
+        }
+
+        $tables = array_values(array_unique($tables));
+
+        if ($tables === []) {
+            return [];
+        }
+
+        $history = $this->loadHistory();
+        $prefixes = [];
+
+        foreach ($tables as $table) {
+            $prefix = $this->lookupMigrationPrefixInHistory($history, $table);
+
+            if ($prefix === null) {
+                $prefix = $this->lookupMigrationPrefixInFilesystem($table, $options);
+            }
+
+            if ($prefix !== null) {
+                $prefixes[] = $prefix;
+            }
+        }
+
+        sort($prefixes);
+
+        return $prefixes;
+    }
+
+    /**
+     * @param array<string, mixed> $history
+     */
+    private function lookupMigrationPrefixInHistory(array $history, string $table): ?string
+    {
+        $records = $history['migrations'] ?? null;
+
+        if (! is_array($records)) {
+            return null;
+        }
+
+        foreach ($records as $record) {
+            if (! is_array($record)) {
+                continue;
+            }
+
+            if (($record['table'] ?? null) === $table && isset($record['prefix']) && is_string($record['prefix'])) {
+                return $record['prefix'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function lookupMigrationPrefixInFilesystem(string $table, array $options): ?string
+    {
+        $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
+        $absoluteRoot = $this->toAbsolutePath($migrationsRoot);
+        $pattern = $absoluteRoot . DIRECTORY_SEPARATOR . '*create_' . $table . '_table.php';
+
+        $matches = glob($pattern);
+
+        if ($matches === false || $matches === []) {
+            return null;
+        }
+
+        $prefixes = [];
+
+        foreach ($matches as $match) {
+            $basename = basename($match);
+
+            if (preg_match('/^(\d{4}_\d{2}_\d{2}_\d{6})_create_/', $basename, $parts)) {
+                $prefixes[] = $parts[1];
+                continue;
+            }
+
+            if (preg_match('/^(\d{14})_create_/', $basename, $parts)) {
+                $prefixes[] = $parts[1];
+            }
+        }
+
+        if ($prefixes === []) {
+            return null;
+        }
+
+        sort($prefixes);
+
+        return end($prefixes) ?: $prefixes[0];
     }
 
     /**
@@ -644,7 +820,7 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         return match ($type) {
-            'string', 'text' => $this->stringFactoryValue($field->name, $rules),
+            'string', 'text' => $this->stringFactoryValue($field->name, $rules, $needsStr),
             'integer', 'biginteger', 'bigint' => [
                 'expression' => 'fake()->numberBetween(1, 1000)',
                 'is_expression' => true,
@@ -891,6 +1067,12 @@ class DatabaseLayerGenerator implements LayerGenerator
                 continue;
             }
 
+            $seederPath = $this->toAbsolutePath('database/seeders/' . $moduleStudly . 'Seeder.php');
+
+            if (! is_file($seederPath)) {
+                continue;
+            }
+
             $moduleSeeders[] = 'Database\\Seeders\\' . $moduleStudly . 'Seeder';
         }
 
@@ -1096,6 +1278,10 @@ class DatabaseLayerGenerator implements LayerGenerator
         $set = [];
 
         foreach ($existingUses as $use) {
+            if (str_starts_with($use, 'Database\\Seeders\\') && ! in_array($use, $moduleSeeders, true)) {
+                continue;
+            }
+
             $set[$use] = true;
         }
 
@@ -1400,46 +1586,139 @@ class DatabaseLayerGenerator implements LayerGenerator
      * @param array<string, string> $rules
      * @return array<string, mixed>
      */
-    private function stringFactoryValue(string $name, array $rules): array
+    private function stringFactoryValue(string $name, array $rules, bool &$needsStr): array
     {
         $lower = Str::lower($name);
 
         if (str_contains($lower, 'email')) {
-            $expression = array_key_exists('unique', $rules)
-                ? 'fake()->unique()->safeEmail()'
-                : 'fake()->safeEmail()';
+            return [
+                'expression' => sprintf('%s->safeEmail()', $this->fakerForString($rules)),
+                'is_expression' => true,
+            ];
+        }
+
+        if (str_contains($lower, 'locale')) {
+            return [
+                'expression' => sprintf('%s->locale()', $this->fakerForString($rules, false)),
+                'is_expression' => true,
+            ];
+        }
+
+        if (str_contains($lower, 'timezone')) {
+            return [
+                'expression' => sprintf('%s->timezone()', $this->fakerForString($rules, false)),
+                'is_expression' => true,
+            ];
+        }
+
+        if (isset($rules['in']) && is_string($rules['in'])) {
+            $values = $this->parseEnumerationValues($rules['in']);
+
+            if ($values !== []) {
+                $list = '[' . implode(', ', array_map(static fn (string $value): string => var_export($value, true), $values)) . ']';
+
+                return [
+                    'expression' => sprintf('fake()->randomElement(%s)', $list),
+                    'is_expression' => true,
+                ];
+            }
+        }
+
+        if (str_contains($lower, 'number')) {
+            return [
+                'expression' => sprintf('%s->regexify(%s)', $this->fakerForString($rules), var_export('[A-Z0-9]{10}', true)),
+                'is_expression' => true,
+            ];
+        }
+
+        if (isset($rules['url'])) {
+            return [
+                'expression' => sprintf('%s->url()', $this->fakerForString($rules, false)),
+                'is_expression' => true,
+            ];
+        }
+
+        if (str_contains($lower, 'slug')) {
+            $maxLength = isset($rules['max']) && is_numeric($rules['max']) ? (int) $rules['max'] : 80;
+            $maxLength = max(12, min($maxLength, 120));
+
+            $wordCount = match (true) {
+                $maxLength <= 16 => 2,
+                $maxLength <= 24 => 3,
+                $maxLength <= 40 => 4,
+                $maxLength <= 64 => 5,
+                default => 6,
+            };
+
+            $needsStr = true;
 
             return [
-                'expression' => $expression,
+                'expression' => sprintf('Str::limit(Str::slug(%s->words(%d, true)), %d, \'\')', $this->fakerForString($rules), $wordCount, $maxLength),
                 'is_expression' => true,
             ];
         }
 
         if (str_contains($lower, 'first_name')) {
             return [
-                'expression' => 'fake()->firstName()',
+                'expression' => sprintf('%s->firstName()', $this->fakerForString($rules)),
                 'is_expression' => true,
             ];
         }
 
         if (str_contains($lower, 'last_name')) {
             return [
-                'expression' => 'fake()->lastName()',
+                'expression' => sprintf('%s->lastName()', $this->fakerForString($rules)),
                 'is_expression' => true,
             ];
         }
 
         if (str_contains($lower, 'name')) {
             return [
-                'expression' => 'fake()->words(3, true)',
+                'expression' => sprintf('%s->words(3, true)', $this->fakerForString($rules)),
+                'is_expression' => true,
+            ];
+        }
+
+        if (isset($rules['size']) && is_numeric($rules['size'])) {
+            $length = max(1, min((int) $rules['size'], 64));
+            $pattern = str_repeat('?', $length);
+
+            return [
+                'expression' => sprintf('%s->lexify(%s)', $this->fakerForString($rules), var_export($pattern, true)),
+                'is_expression' => true,
+            ];
+        }
+
+        if (isset($rules['max']) && is_numeric($rules['max'])) {
+            $length = max(1, min((int) $rules['max'], 32));
+            $pattern = str_repeat('?', $length);
+
+            return [
+                'expression' => sprintf('%s->lexify(%s)', $this->fakerForString($rules), var_export($pattern, true)),
                 'is_expression' => true,
             ];
         }
 
         return [
-            'expression' => 'fake()->word()',
+            'expression' => sprintf('%s->lexify(%s)', $this->fakerForString($rules), var_export(str_repeat('?', 10), true)),
             'is_expression' => true,
         ];
+    }
+
+    private function fakerForString(array $rules, bool $allowUnique = true): string
+    {
+        if ($allowUnique && array_key_exists('unique', $rules)) {
+            return 'fake()->unique()';
+        }
+
+        return 'fake()';
+    }
+
+    private function parseEnumerationValues(string $value): array
+    {
+        $items = array_map('trim', explode(',', $value));
+
+        return array_values(array_filter($items, static fn (string $item): bool => $item !== ''));
     }
 
     /**

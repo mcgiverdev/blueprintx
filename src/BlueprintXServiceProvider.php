@@ -14,6 +14,7 @@ use BlueprintX\Generators\DocsLayerGenerator;
 use BlueprintX\Generators\TestsLayerGenerator;
 use BlueprintX\Kernel\DriverManager;
 use BlueprintX\Kernel\BlueprintLocator;
+use BlueprintX\Generators\PostmanLayerGenerator;
 use BlueprintX\Kernel\GenerationPipeline;
 use BlueprintX\Kernel\OutputWriter;
 use BlueprintX\Kernel\TemplateEngine;
@@ -208,6 +209,25 @@ class BlueprintXServiceProvider extends ServiceProvider
                     $validate,
                     $schemaPath,
                     $validationMode
+                );
+            }
+        );
+
+        $this->app->singleton(
+            PostmanLayerGenerator::class,
+            function ($app) {
+                $feature = $app['config']->get('blueprintx.features.postman', []);
+
+                $enabled = (bool) ($feature['enabled'] ?? false);
+                $baseUrl = $feature['base_url'] ?? 'http://localhost/api';
+                if (! is_string($baseUrl) || $baseUrl === '') {
+                    $baseUrl = 'http://localhost/api';
+                }
+
+                return new PostmanLayerGenerator(
+                    $app->make(OpenApiDocumentBuilder::class),
+                    $enabled,
+                    $baseUrl
                 );
             }
         );

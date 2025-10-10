@@ -61,6 +61,8 @@ php artisan blueprintx:generate --dry-run    # previsualiza cambios
 | `--without-openapi` | Desactiva OpenAPI aunque esté habilitado en la configuración. |
 | `--validate-openapi` | Obliga a validar el documento generado incluso si `features.openapi.validate` es `false`. |
 | `--skip-openapi-validation` | Omite la validación (útil offline). |
+| `--with-postman` | Genera la colección Postman aun cuando `features.postman.enabled` sea `false`. |
+| `--without-postman` | Omite la colección Postman aunque la opción global esté activa. |
 | `--architecture=` | Sobrescribe el driver declarado en el blueprint. |
 
 ### Resumen de salida
