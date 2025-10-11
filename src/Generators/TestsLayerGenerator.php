@@ -213,7 +213,7 @@ class TestsLayerGenerator implements LayerGenerator
     }
 
     /**
-     * @return array<int, array{name:string,field:string,variable:string,import:string,class:string}>
+     * @return array<int, array{name:string,field:string,variable:string,import:string,class:string,method:string}>
      */
     private function prepareRelations(Blueprint $blueprint): array
     {
@@ -223,6 +223,7 @@ class TestsLayerGenerator implements LayerGenerator
             : '';
 
         $relations = [];
+        $existingRelationFields = [];
 
         foreach ($blueprint->relations() as $relation) {
             if (strtolower($relation->type) !== 'belongsto') {
@@ -242,9 +243,13 @@ class TestsLayerGenerator implements LayerGenerator
                 'class' => $class,
                 'method' => Str::camel($relation->target),
             ];
+
+            $existingRelationFields[] = $field;
         }
 
-        return $relations;
+        $implicitRelations = $this->inferImplicitBelongsToRelations($blueprint, $existingRelationFields, $moduleNamespace);
+
+        return array_merge($relations, $implicitRelations);
     }
 
     /**
@@ -288,7 +293,107 @@ class TestsLayerGenerator implements LayerGenerator
     }
 
     /**
-     * @param array<int, array{name:string,field:string,variable:string,import:string,class:string}> $relations
+     * @param array<int, string> $existingRelationFields
+     * @return array<int, array{name:string,field:string,variable:string,import:string,class:string,method:string}>
+     */
+    private function inferImplicitBelongsToRelations(
+        Blueprint $blueprint,
+        array $existingRelationFields,
+        string $moduleNamespace
+    ): array {
+        $relations = [];
+
+        foreach ($blueprint->fields() as $field) {
+            $fieldName = $field->name;
+
+            if (in_array($fieldName, $existingRelationFields, true)) {
+                continue;
+            }
+
+            $existsRule = $this->extractExistsRule($field->rules ?? null);
+
+            if ($existsRule === null) {
+                continue;
+            }
+
+            $targetStudly = Str::studly(Str::singular($existsRule['table']));
+
+            if ($targetStudly === '') {
+                continue;
+            }
+
+            $variable = $this->relationVariableFromField($fieldName, $targetStudly);
+            $class = sprintf('App\\Domain\\%sModels\\%s', $moduleNamespace, $targetStudly);
+
+            $relations[] = [
+                'name' => $targetStudly,
+                'field' => $fieldName,
+                'variable' => $variable,
+                'import' => $class,
+                'class' => $class,
+                'method' => $variable,
+            ];
+        }
+
+        return $relations;
+    }
+
+    /**
+     * @return array{table:string,column:string}|null
+     */
+    private function extractExistsRule(?string $rules): ?array
+    {
+        if (! is_string($rules) || trim($rules) === '') {
+            return null;
+        }
+
+        $segments = array_filter(array_map('trim', explode('|', $rules)));
+
+        foreach ($segments as $segment) {
+            [$rule, $parameters] = array_pad(explode(':', $segment, 2), 2, null);
+
+            if (Str::lower((string) $rule) !== 'exists') {
+                continue;
+            }
+
+            if ($parameters === null || $parameters === '') {
+                return null;
+            }
+
+            $parts = array_values(array_filter(array_map('trim', explode(',', $parameters))));
+
+            $table = array_shift($parts);
+
+            if (! is_string($table) || $table === '') {
+                return null;
+            }
+
+            if (str_contains($table, '.')) {
+                $tableSegments = array_filter(array_map('trim', explode('.', $table)));
+                $table = (string) array_pop($tableSegments);
+            }
+
+            if ($table === '') {
+                return null;
+            }
+
+            $column = $parts[0] ?? 'id';
+
+            if (! is_string($column) || $column === '') {
+                $column = 'id';
+            }
+
+            return [
+                'table' => $table,
+                'column' => $column,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<int, array{name:string,field:string,variable:string,import:string,class:string,method:string}> $relations
      */
     private function prepareFieldPayloads(Blueprint $blueprint, array $relations): array
     {
@@ -838,3 +943,6 @@ class TestsLayerGenerator implements LayerGenerator
         return number_format($value, max($scale, 0), '.', '');
     }
 }
+
+
+
