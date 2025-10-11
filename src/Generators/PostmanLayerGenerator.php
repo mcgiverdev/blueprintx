@@ -14,6 +14,15 @@ use JsonException;
 
 class PostmanLayerGenerator implements LayerGenerator
 {
+    private const REGISTER_EXCLUDED_FIELDS = [
+        'id',
+        'created_at',
+        'updated_at',
+        'deleted_at',
+        'email_verified_at',
+        'remember_token',
+    ];
+
     public function __construct(
         private readonly OpenApiDocumentBuilder $builder,
         private readonly bool $enabledByDefault = false,
@@ -68,7 +77,9 @@ class PostmanLayerGenerator implements LayerGenerator
             $baseUrl = $this->defaultBaseUrl;
         }
 
-        $collection = $this->buildCollection($blueprint, $document, $baseUrl, $normalizedApiPrefix);
+    $authFields = $this->resolveAuthFields($blueprint, $options);
+
+    $collection = $this->buildCollection($blueprint, $document, $baseUrl, $normalizedApiPrefix, $authFields);
 
         try {
             $contents = json_encode($collection, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
@@ -87,13 +98,13 @@ class PostmanLayerGenerator implements LayerGenerator
     /**
      * @param array<string, mixed> $document
      */
-    private function buildCollection(Blueprint $blueprint, array $document, string $baseUrl, string $apiPrefix): array
+    private function buildCollection(Blueprint $blueprint, array $document, string $baseUrl, string $apiPrefix, array $authFields): array
     {
         $entityName = Str::studly($blueprint->entity());
         $description = $document['info']['description'] ?? null;
 
         $items = array_merge(
-            [$this->buildAuthGroup($apiPrefix)],
+            [$this->buildAuthGroup($authFields, $apiPrefix)],
             $this->buildItems($document, $entityName, $blueprint, $apiPrefix)
         );
 
@@ -132,6 +143,40 @@ class PostmanLayerGenerator implements LayerGenerator
                 ],
             ],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return Field[]
+     */
+    private function resolveAuthFields(Blueprint $blueprint, array $options): array
+    {
+        $definitions = $options['auth_model_fields'] ?? null;
+
+        if (is_array($definitions) && $definitions !== []) {
+            $resolved = [];
+
+            foreach ($definitions as $definition) {
+                if (! is_array($definition)) {
+                    continue;
+                }
+
+                $name = $definition['name'] ?? null;
+                $type = $definition['type'] ?? null;
+
+                if (! is_string($name) || $name === '' || ! is_string($type) || $type === '') {
+                    continue;
+                }
+
+                $resolved[] = Field::fromArray($definition);
+            }
+
+            if ($resolved !== []) {
+                return $resolved;
+            }
+        }
+
+        return $blueprint->fields();
     }
 
     /**
@@ -541,13 +586,16 @@ class PostmanLayerGenerator implements LayerGenerator
         ];
     }
 
-    private function buildAuthGroup(string $apiPrefix): array
+    /**
+     * @param Field[] $authFields
+     */
+    private function buildAuthGroup(array $authFields, string $apiPrefix): array
     {
         return [
             'name' => 'Autenticación',
             'item' => array_values(array_filter([
                 $this->buildLoginRequest($apiPrefix),
-                $this->buildRegisterRequest($apiPrefix),
+                $this->buildRegisterRequest($authFields, $apiPrefix),
                 $this->buildProfileRequest($apiPrefix),
                 $this->buildLogoutRequest($apiPrefix),
             ])),
@@ -586,7 +634,10 @@ class PostmanLayerGenerator implements LayerGenerator
         ]);
     }
 
-    private function buildRegisterRequest(string $apiPrefix): array
+    /**
+     * @param Field[] $authFields
+     */
+    private function buildRegisterRequest(array $authFields, string $apiPrefix): array
     {
         $path = '/auth/register';
         $pathDetails = [
@@ -594,17 +645,8 @@ class PostmanLayerGenerator implements LayerGenerator
             'variables' => [],
         ];
 
-        $rawBody = $this->encodeJson([
-            'tenant_id' => '{{tenant_id}}',
-            'email' => 'admin@example.com',
-            'password' => 'password',
-            'password_confirmation' => 'password',
-            'full_name' => 'Demo Admin',
-            'role' => 'admin',
-            'locale' => 'es-ES',
-            'timezone' => 'Europe/Madrid',
-            'device_name' => 'postman',
-        ]);
+        $payload = $this->buildRegisterPayload($authFields);
+        $rawBody = $this->encodeJson($payload);
 
         return array_filter([
             'name' => 'Register (crear usuario)',
@@ -621,6 +663,49 @@ class PostmanLayerGenerator implements LayerGenerator
                 ],
             ],
         ]);
+    }
+
+    /**
+     * @param Field[] $fields
+     */
+    private function buildRegisterPayload(array $fields): array
+    {
+        $payload = [];
+
+        foreach ($fields as $field) {
+            if (! $field instanceof Field) {
+                continue;
+            }
+
+            if ($this->isReadOnlyField($field->name)) {
+                continue;
+            }
+
+            if (in_array($field->name, self::REGISTER_EXCLUDED_FIELDS, true)) {
+                continue;
+            }
+
+            $payload[$field->name] = $this->sampleFieldValue($field);
+        }
+
+        if (array_key_exists('tenant_id', $payload)) {
+            $payload['tenant_id'] = '{{tenant_id}}';
+        }
+
+        if (array_key_exists('email', $payload)) {
+            $payload['email'] = 'admin@example.com';
+        }
+
+        if (array_key_exists('password', $payload)) {
+            $payload['password'] = 'password';
+            $payload['password_confirmation'] = $payload['password'];
+        }
+
+        if (! array_key_exists('device_name', $payload)) {
+            $payload['device_name'] = 'postman';
+        }
+
+        return $payload;
     }
 
     private function buildProfileRequest(string $apiPrefix): array

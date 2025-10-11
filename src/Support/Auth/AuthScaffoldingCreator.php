@@ -306,6 +306,7 @@ class AuthScaffoldingCreator
     {
         return [
             'tenant_id' => ['required', 'uuid', 'exists:tenants,id'],
+            'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:120', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
             'full_name' => ['required', 'string', 'max:120'],
@@ -418,6 +419,7 @@ class AuthScaffoldingCreator
             'attributes' => [
                 'id',
                 'tenant_id',
+                'name',
                 'email',
                 'password',
                 'full_name',

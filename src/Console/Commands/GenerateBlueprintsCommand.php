@@ -3,6 +3,7 @@
 namespace BlueprintX\Console\Commands;
 
 use BlueprintX\Blueprint\Blueprint;
+use BlueprintX\Blueprint\Field;
 use BlueprintX\Contracts\BlueprintParser;
 use BlueprintX\Contracts\BlueprintValidator;
 use BlueprintX\Exceptions\BlueprintParseException;
@@ -93,7 +94,8 @@ SIGNATURE;
             ? (bool) $formRequestFeature['authorize_by_default']
             : true;
 
-        $blueprintsPath = $config['paths']['blueprints'] ?? null;
+    $blueprintsPath = $config['paths']['blueprints'] ?? null;
+    $authModelEntity = $this->resolveAuthModelEntity();
 
         if (! is_string($blueprintsPath) || $blueprintsPath === '') {
             $this->error('No se encontro la configuracion "blueprintx.paths.blueprints".');
@@ -162,7 +164,9 @@ SIGNATURE;
         ];
         $lastArchitecture = null;
 
-        $queue = $this->prepareBlueprintQueue($blueprintPaths);
+    $queue = $this->prepareBlueprintQueue($blueprintPaths);
+    $authModelBlueprint = $this->findAuthModelBlueprint($queue, $authModelEntity);
+    $authModelFields = $this->serializeAuthModelFields($authModelBlueprint);
 
         foreach ($queue as $entry) {
             $path = $entry['path'];
@@ -248,6 +252,7 @@ SIGNATURE;
                     'path' => $formRequestsPath,
                     'authorize_by_default' => $authorizeByDefault,
                 ],
+                'auth_model_fields' => $authModelFields,
             ];
 
             if ($only !== null) {
@@ -269,11 +274,12 @@ SIGNATURE;
         }
 
         if (! $dryRun) {
+            $authModelData = $authModelBlueprint instanceof Blueprint ? $authModelBlueprint->toArray() : null;
             $scaffoldingArchitecture = $architectureOverride !== null
                 ? $this->normalizeArchitecture($architectureOverride, $defaultArchitecture)
                 : ($lastArchitecture ?? $defaultArchitecture);
 
-            $this->authScaffolding->ensure([
+            $authOptions = [
                 'architecture' => $scaffoldingArchitecture,
                 'controllers_path' => $apiControllersPath,
                 'controllers_namespace' => $controllersNamespace,
@@ -283,7 +289,13 @@ SIGNATURE;
                 'resources_namespace' => $resourcesNamespace,
                 'force' => $forceAuth,
                 'dry_run' => $dryRun,
-            ]);
+            ];
+
+            if ($authModelData !== null) {
+                $authOptions['model'] = $authModelData;
+            }
+
+            $this->authScaffolding->ensure($authOptions);
         }
 
         $totalProcessed = $summary['written'] + $summary['overwritten'] + $summary['skipped'] + $summary['preview'];
@@ -404,6 +416,68 @@ SIGNATURE;
         }
 
         return $this->ensureLeadingSlash($normalized);
+    }
+
+    private function resolveAuthModelEntity(): ?string
+    {
+        $model = $this->laravel['config']->get('auth.providers.users.model');
+
+        if (! is_string($model) || $model === '') {
+            return null;
+        }
+
+        $basename = class_basename($model);
+
+        if ($basename === '') {
+            return null;
+        }
+
+        return Str::lower($basename);
+    }
+
+    private function matchesAuthModelBlueprint(Blueprint $blueprint, ?string $authModelEntity): bool
+    {
+        if ($authModelEntity === null) {
+            return false;
+        }
+
+        return Str::lower($blueprint->entity()) === $authModelEntity;
+    }
+
+    private function findAuthModelBlueprint(array $queue, ?string $authModelEntity): ?Blueprint
+    {
+        if ($authModelEntity === null) {
+            return null;
+        }
+
+        foreach ($queue as $entry) {
+            if (! ($entry['blueprint'] ?? null) instanceof Blueprint) {
+                continue;
+            }
+
+            if ($this->matchesAuthModelBlueprint($entry['blueprint'], $authModelEntity)) {
+                return $entry['blueprint'];
+            }
+        }
+
+        return null;
+    }
+
+    private function serializeAuthModelFields(?Blueprint $blueprint): ?array
+    {
+        if (! $blueprint instanceof Blueprint) {
+            return null;
+        }
+
+        $fields = [];
+
+        foreach ($blueprint->fields() as $field) {
+            if ($field instanceof Field) {
+                $fields[] = $field->toArray();
+            }
+        }
+
+        return $fields !== [] ? $fields : null;
     }
 
     /**
