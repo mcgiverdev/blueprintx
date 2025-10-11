@@ -57,6 +57,7 @@ php artisan blueprintx:generate --dry-run    # previsualiza cambios
 | `--only=domain,api` | Limita las capas generadas. Acepta cualquier clave registrada en `config('blueprintx.generators')`. |
 | `--dry-run` | Muestra los archivos que se generarían sin escribir en disco. |
 | `--force` | Sobrescribe archivos existentes. |
+| `--force-auth` | Regenera el scaffolding de autenticacion (controlador, requests, resource y rutas) incluso si ya existen archivos. |
 | `--with-openapi` | Fuerza la generación de documentación OpenAPI sin importar la configuración global. |
 | `--without-openapi` | Desactiva OpenAPI aunque esté habilitado en la configuración. |
 | `--validate-openapi` | Obliga a validar el documento generado incluso si `features.openapi.validate` es `false`. |
@@ -64,6 +65,9 @@ php artisan blueprintx:generate --dry-run    # previsualiza cambios
 | `--with-postman` | Genera la colección Postman aun cuando `features.postman.enabled` sea `false`. |
 | `--without-postman` | Omite la colección Postman aunque la opción global esté activa. |
 | `--architecture=` | Sobrescribe el driver declarado en el blueprint. |
+
+
+> Nota: `--force` activa implicitamente `--force-auth`, por lo que no es necesario especificar ambas banderas a la vez.
 
 ### Resumen de salida
 

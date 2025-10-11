@@ -1,0 +1,25 @@
+<?php
+
+namespace {{ namespace }};
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class RegisterRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    public function rules(): array
+    {
+{% if has_rules %}        return [
+{% for rule in rules %}            {{ rule.field_code|raw }} => [{{ rule.parts_code|raw }}],
+{% endfor %}        ];
+{% else %}        return [];
+{% endif %}
+    }
+}

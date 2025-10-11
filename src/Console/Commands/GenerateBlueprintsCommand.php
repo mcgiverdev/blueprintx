@@ -10,6 +10,7 @@ use BlueprintX\Exceptions\BlueprintValidationException;
 use BlueprintX\Kernel\BlueprintLocator;
 use BlueprintX\Kernel\Generation\PipelineResult;
 use BlueprintX\Kernel\GenerationPipeline;
+use BlueprintX\Support\Auth\AuthScaffoldingCreator;
 use BlueprintX\Validation\ValidationMessage;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
@@ -19,20 +20,21 @@ class GenerateBlueprintsCommand extends Command
 {
     protected $signature = <<<SIGNATURE
     blueprintx:generate
-        {module? : Módulo del blueprint (ej. hr)}
+        {module? : Modulo del blueprint (ej. hr)}
         {entity? : Entidad del blueprint (ej. employee)}
-        {--module= : Filtra por módulo (alternativa al argumento)}
+        {--module= : Filtra por modulo (alternativa al argumento)}
         {--entity= : Filtra por entidad (alternativa al argumento)}
         {--architecture= : Sobrescribe la arquitectura declarada en el blueprint}
         {--only= : Lista de capas a generar separadas por coma}
         {--dry-run : Previsualiza cambios sin escribir archivos}
         {--force : Sobrescribe archivos existentes sin preguntar}
-        {--with-openapi : Fuerza la generación del documento OpenAPI}
-        {--without-openapi : Omite la generación del documento OpenAPI}
-        {--validate-openapi : Fuerza la validación del documento OpenAPI}
-    {--skip-openapi-validation : Omite la validación del documento OpenAPI}
-    {--with-postman : Fuerza la generación de la colección de Postman}
-    {--without-postman : Omite la generación de la colección de Postman}
+        {--force-auth : Fuerza la regeneracion del scaffolding de autenticacion}
+        {--with-openapi : Fuerza la generacion del documento OpenAPI}
+        {--without-openapi : Omite la generacion del documento OpenAPI}
+        {--validate-openapi : Fuerza la validacion del documento OpenAPI}
+        {--skip-openapi-validation : Omite la validacion del documento OpenAPI}
+        {--with-postman : Fuerza la generación de la coleccion de Postman}
+        {--without-postman : Omite la generación de la coleccion de Postman}
 SIGNATURE;
 
     protected $description = 'Genera artefactos a partir de blueprints YAML usando el pipeline configurado.';
@@ -42,6 +44,7 @@ SIGNATURE;
         private readonly BlueprintValidator $validator,
         private readonly GenerationPipeline $pipeline,
         private readonly BlueprintLocator $locator,
+        private readonly AuthScaffoldingCreator $authScaffolding,
     ) {
         parent::__construct();
     }
@@ -54,40 +57,31 @@ SIGNATURE;
         $only = $this->normalizeNullableString($this->option('only'));
         $dryRun = (bool) $this->option('dry-run');
         $force = (bool) $this->option('force');
+        $forceAuth = $force || (bool) $this->option('force-auth');
 
         $config = $this->laravel['config']->get('blueprintx', []);
         $featureConfig = $config['features']['openapi'] ?? [];
         $defaultOpenApiEnabled = (bool) ($featureConfig['enabled'] ?? false);
         $defaultOpenApiValidation = array_key_exists('validate', $featureConfig) ? (bool) $featureConfig['validate'] : true;
-        $postmanFeature = $config['features']['postman'] ?? [];
-        $defaultPostmanEnabled = (bool) ($postmanFeature['enabled'] ?? false);
-        $defaultPostmanBaseUrl = $postmanFeature['base_url'] ?? 'http://localhost';
-        if (! is_string($defaultPostmanBaseUrl) || trim($defaultPostmanBaseUrl) === '') {
-            $defaultPostmanBaseUrl = 'http://localhost';
-        }
-
-        $defaultPostmanApiPrefix = $postmanFeature['api_prefix'] ?? '/api';
-        if (! is_string($defaultPostmanApiPrefix)) {
-            $defaultPostmanApiPrefix = '/api';
-        }
 
         $pathsConfig = $config['paths'] ?? [];
+        $defaultArchitecture = $this->normalizeArchitecture($config['default_architecture'] ?? null, 'hexagonal');
         $formRequestFeature = $config['features']['api']['form_requests'] ?? [];
+        $resourcesFeature = $config['features']['api']['resources'] ?? [];
 
         $apiControllersPath = $this->normalizeRelativePath($pathsConfig['api'] ?? null, 'app/Http/Controllers/Api');
         $defaultRequestsPath = $this->normalizeRelativePath($pathsConfig['api_requests'] ?? null, 'app/Http/Requests/Api');
+        $defaultResourcesPath = $this->normalizeRelativePath($pathsConfig['api_resources'] ?? null, 'app/Http/Resources');
         $formRequestsPath = $this->normalizeRelativePath($formRequestFeature['path'] ?? null, $defaultRequestsPath);
-        $postmanOutputPath = $this->normalizeRelativePath($pathsConfig['postman'] ?? null, 'docs/postman');
+        $resourcesPath = $this->normalizeRelativePath($resourcesFeature['path'] ?? null, $defaultResourcesPath);
 
         $formRequestsEnabled = array_key_exists('enabled', $formRequestFeature)
             ? (bool) $formRequestFeature['enabled']
             : true;
 
-        $requestsNamespace = $formRequestFeature['namespace'] ?? 'App\\Http\\Requests\\Api';
-        if (! is_string($requestsNamespace) || $requestsNamespace === '') {
-            $requestsNamespace = 'App\\Http\\Requests\\Api';
-        }
-        $requestsNamespace = trim($requestsNamespace, '\\');
+        $requestsNamespace = $this->normalizeNamespace($formRequestFeature['namespace'] ?? 'App\\Http\\Requests\\Api', 'App\\Http\\Requests\\Api');
+        $resourcesNamespace = $this->normalizeNamespace($resourcesFeature['namespace'] ?? 'App\\Http\\Resources', 'App\\Http\\Resources');
+        $controllersNamespace = $this->normalizeNamespace($pathsConfig['api_namespace'] ?? $apiControllersPath, 'App\\Http\\Controllers\\Api');
 
         $authorizeByDefault = array_key_exists('authorize_by_default', $formRequestFeature)
             ? (bool) $formRequestFeature['authorize_by_default']
@@ -96,7 +90,7 @@ SIGNATURE;
         $blueprintsPath = $config['paths']['blueprints'] ?? null;
 
         if (! is_string($blueprintsPath) || $blueprintsPath === '') {
-            $this->error('No se encontró la configuración "blueprintx.paths.blueprints".');
+            $this->error('No se encontro la configuracion "blueprintx.paths.blueprints".');
 
             return self::FAILURE;
         }
@@ -111,8 +105,6 @@ SIGNATURE;
         $withoutOpenApiOption = (bool) $this->option('without-openapi');
         $validateOpenApiOption = (bool) $this->option('validate-openapi');
         $skipOpenApiValidation = (bool) $this->option('skip-openapi-validation');
-        $withPostmanOption = (bool) $this->option('with-postman');
-        $withoutPostmanOption = (bool) $this->option('without-postman');
 
         if ($withOpenApiOption && $withoutOpenApiOption) {
             $this->error('No se puede usar "--with-openapi" junto con "--without-openapi".');
@@ -126,18 +118,8 @@ SIGNATURE;
             return self::FAILURE;
         }
 
-        if ($withPostmanOption && $withoutPostmanOption) {
-            $this->error('No se puede usar "--with-postman" junto con "--without-postman".');
-
-            return self::FAILURE;
-        }
-
         $withOpenApi = $withOpenApiOption ? true : ($withoutOpenApiOption ? false : $defaultOpenApiEnabled);
         $validateOpenApi = $skipOpenApiValidation ? false : ($validateOpenApiOption ? true : $defaultOpenApiValidation);
-        $withPostman = $withPostmanOption ? true : ($withoutPostmanOption ? false : $defaultPostmanEnabled);
-
-    $sanctumInstalled = class_exists('Laravel\\Sanctum\\Sanctum');
-    $sanctumSuggestionShown = false;
 
         $blueprintPaths = $this->locator->discover($blueprintsPath, $module, $entity);
 
@@ -163,6 +145,7 @@ SIGNATURE;
             'errors' => 0,
             'warnings' => 0,
         ];
+        $lastArchitecture = null;
 
         foreach ($blueprintPaths as $path) {
             $relative = $this->locator->relativePath($blueprintsPath, $path);
@@ -187,18 +170,12 @@ SIGNATURE;
                 $this->line(sprintf('  > Arquitectura forzada a "%s".', $architectureOverride));
             }
 
-            if (! $sanctumInstalled && ! $sanctumSuggestionShown && $this->blueprintRequiresSanctum($blueprint)) {
-                $this->warn('  No se detectó Laravel Sanctum, requerido por el middleware auth:sanctum.');
-                $this->line('    composer require laravel/sanctum');
-                $this->line('    php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"');
-                $this->line('    php artisan migrate');
-                $sanctumSuggestionShown = true;
-            }
+            $lastArchitecture = strtolower($blueprint->architecture());
 
             try {
                 $validation = $this->validator->validate($blueprint);
             } catch (BlueprintValidationException $exception) {
-                $this->error(sprintf('  Falló la validación del blueprint "%s": %s', $relative, $exception->getMessage()));
+                $this->error(sprintf('  Fallo la validacion del blueprint "%s": %s', $relative, $exception->getMessage()));
                 $hasErrors = true;
 
                 continue;
@@ -210,7 +187,7 @@ SIGNATURE;
             }
 
             if (! $validation->isValid()) {
-                $this->error('  La validación produjo errores:');
+                $this->error('  La validacion produjo errores:');
                 $this->renderValidationMessages($validation->errors(), 'error');
                 $hasErrors = true;
 
@@ -218,7 +195,7 @@ SIGNATURE;
             }
 
             if ($validation->warnings() !== []) {
-                $this->warn('  La validación devolvió warnings:');
+                $this->warn('  La validacion devolvio warnings:');
                 $this->renderValidationMessages($validation->warnings(), 'warning');
             }
 
@@ -227,21 +204,20 @@ SIGNATURE;
                 'force' => $force,
                 'with_openapi' => $withOpenApi,
                 'validate_openapi' => $validateOpenApi,
-                'with_postman' => $withPostman,
                 'paths' => [
                     'api' => $apiControllersPath,
-                    'api_requests' => $defaultRequestsPath,
-                    'postman' => $postmanOutputPath,
+                    'api_requests' => $formRequestsPath,
+                    'api_resources' => $resourcesPath,
+                ],
+                'namespaces' => [
+                    'api_requests' => $requestsNamespace,
+                    'api_resources' => $resourcesNamespace,
                 ],
                 'form_requests' => [
                     'enabled' => $formRequestsEnabled,
                     'namespace' => $requestsNamespace,
                     'path' => $formRequestsPath,
                     'authorize_by_default' => $authorizeByDefault,
-                ],
-                'postman' => [
-                    'base_url' => $defaultPostmanBaseUrl,
-                    'api_prefix' => $defaultPostmanApiPrefix,
                 ],
             ];
 
@@ -261,6 +237,24 @@ SIGNATURE;
             $hasErrors = $this->renderPipelineResult($result, $summary) || $hasErrors;
 
             $this->newLine();
+        }
+
+        if (! $dryRun) {
+            $scaffoldingArchitecture = $architectureOverride !== null
+                ? $this->normalizeArchitecture($architectureOverride, $defaultArchitecture)
+                : ($lastArchitecture ?? $defaultArchitecture);
+
+            $this->authScaffolding->ensure([
+                'architecture' => $scaffoldingArchitecture,
+                'controllers_path' => $apiControllersPath,
+                'controllers_namespace' => $controllersNamespace,
+                'requests_path' => $formRequestsPath,
+                'requests_namespace' => $requestsNamespace,
+                'resources_path' => $resourcesPath,
+                'resources_namespace' => $resourcesNamespace,
+                'force' => $forceAuth,
+                'dry_run' => $dryRun,
+            ]);
         }
 
         $totalProcessed = $summary['written'] + $summary['overwritten'] + $summary['skipped'] + $summary['preview'];
@@ -283,9 +277,9 @@ SIGNATURE;
         $parts[] = sprintf('errores: %d', $summary['errors']);
 
         $this->info(sprintf(
-            'Resumen: %d archivo(s) procesados • %s',
+            'Resumen: %d archivo(s) procesados - %s',
             $totalProcessed,
-            implode(' • ', $parts),
+            implode(' - ', $parts),
         ));
 
         if ($hasErrors || $summary['errors'] > 0) {
@@ -319,6 +313,38 @@ SIGNATURE;
         }
 
         return trim($value, '\\/');
+    }
+
+    private function normalizeNamespace(mixed $value, string $default): string
+    {
+        if (! is_string($value)) {
+            return $default;
+        }
+
+        $normalized = trim(str_replace('/', '\\', $value), '\\');
+
+        if ($normalized === '') {
+            return $default;
+        }
+
+        if (strncasecmp($normalized, 'app\\', 4) === 0) {
+            $normalized = 'App\\' . substr($normalized, 4);
+        }
+
+        if (! str_starts_with($normalized, 'App\\')) {
+            $normalized = 'App\\' . ltrim($normalized, '\\');
+        }
+
+        return $normalized !== '' ? $normalized : $default;
+    }
+
+    private function normalizeArchitecture(mixed $value, string $default): string
+    {
+        if (is_string($value) && trim($value) !== '') {
+            return strtolower(trim($value));
+        }
+
+        return strtolower($default);
     }
 
     /**
@@ -408,23 +434,6 @@ SIGNATURE;
         return '';
     }
 
-    private function blueprintRequiresSanctum(Blueprint $blueprint): bool
-    {
-        foreach ($blueprint->apiMiddleware() as $middleware) {
-            if (! is_string($middleware)) {
-                continue;
-            }
-
-            $normalized = strtolower(trim($middleware));
-
-            if ($normalized === 'auth:sanctum' || str_contains($normalized, 'sanctum')) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private function overrideArchitecture(Blueprint $blueprint, string $architecture): Blueprint
     {
         $data = $blueprint->toArray();
@@ -434,3 +443,7 @@ SIGNATURE;
         return Blueprint::fromArray($data);
     }
 }
+
+
+
+

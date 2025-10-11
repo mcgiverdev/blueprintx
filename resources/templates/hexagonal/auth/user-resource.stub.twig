@@ -1,0 +1,24 @@
+<?php
+
+namespace {{ namespace }};
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+{% if imports is not empty %}
+{% for import in imports %}use {{ import }};
+{% endfor %}
+{% endif %}
+class UserResource extends JsonResource
+{
+    /**
+     * @return array<string, mixed>
+     */
+    public function toArray(Request $request): array
+    {
+        return [
+{% for attribute in attributes %}            '{{ attribute }}' => $this->{{ attribute }},
+{% endfor %}{% if relationships is not empty %}
+{% for relationship in relationships %}            '{{ relationship.property }}' => {{ relationship.expression }},
+{% endfor %}{% endif %}        ];
+    }
+}

@@ -7,6 +7,8 @@ use Tests\TestCase;
 use {{ entity.class|default('App\\Domain\\Sample\\Models\\Sample') }};
 {% for import in relation_imports %}use {{ import }};
 {% endfor %}
+{% if tests.password_fields|length > 0 %}use Illuminate\\Support\\Facades\\Hash;
+{% endif %}
 
 class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {
@@ -149,3 +151,13 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
         ]);
     }
 }
+
+
+
+
+
+
+
+
+
+
