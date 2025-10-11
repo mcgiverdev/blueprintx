@@ -4,6 +4,8 @@
     - migration.class_name
     - migration.table
     - migration.columns
+    - migration.drops
+    - migration.mode (create|alter)
 #}
 <?php
 
@@ -15,17 +17,37 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('{{ migration.table }}', function (Blueprint $table): void {
+    {% if migration.mode == 'alter' %}
+    Schema::table('{{ migration.table }}', function (Blueprint $table): void {
 {% for column in migration.columns %}
-            {{ column }}
+        {{ column }}
 {% else %}
-            // TODO: definir columnas para la tabla {{ migration.table }}
+        // TODO: agregar columnas o llaves foraneas para la tabla {{ migration.table }}
 {% endfor %}
-        });
+    });
+    {% else %}
+    Schema::create('{{ migration.table }}', function (Blueprint $table): void {
+{% for column in migration.columns %}
+        {{ column }}
+{% else %}
+        // TODO: definir columnas para la tabla {{ migration.table }}
+{% endfor %}
+    });
+    {% endif %}
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('{{ migration.table }}');
+    {% if migration.mode == 'alter' %}
+    Schema::table('{{ migration.table }}', function (Blueprint $table): void {
+{% for drop in migration.drops %}
+        {{ drop }}
+{% else %}
+        // TODO: revertir los cambios aplicados sobre {{ migration.table }}
+{% endfor %}
+    });
+    {% else %}
+    Schema::dropIfExists('{{ migration.table }}');
+    {% endif %}
     }
 };

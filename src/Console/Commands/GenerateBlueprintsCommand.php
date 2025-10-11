@@ -64,6 +64,11 @@ SIGNATURE;
         $defaultOpenApiEnabled = (bool) ($featureConfig['enabled'] ?? false);
         $defaultOpenApiValidation = array_key_exists('validate', $featureConfig) ? (bool) $featureConfig['validate'] : true;
 
+        $postmanFeature = $config['features']['postman'] ?? [];
+        $defaultPostmanEnabled = (bool) ($postmanFeature['enabled'] ?? false);
+        $defaultPostmanBaseUrl = $this->normalizeUrl($postmanFeature['base_url'] ?? null, 'http://localhost');
+        $defaultPostmanApiPrefix = $this->normalizeApiPrefixOption($postmanFeature['api_prefix'] ?? null, '/api');
+
         $pathsConfig = $config['paths'] ?? [];
         $defaultArchitecture = $this->normalizeArchitecture($config['default_architecture'] ?? null, 'hexagonal');
         $formRequestFeature = $config['features']['api']['form_requests'] ?? [];
@@ -74,6 +79,7 @@ SIGNATURE;
         $defaultResourcesPath = $this->normalizeRelativePath($pathsConfig['api_resources'] ?? null, 'app/Http/Resources');
         $formRequestsPath = $this->normalizeRelativePath($formRequestFeature['path'] ?? null, $defaultRequestsPath);
         $resourcesPath = $this->normalizeRelativePath($resourcesFeature['path'] ?? null, $defaultResourcesPath);
+        $postmanPath = $this->normalizeRelativePath($pathsConfig['postman'] ?? null, 'docs/postman');
 
         $formRequestsEnabled = array_key_exists('enabled', $formRequestFeature)
             ? (bool) $formRequestFeature['enabled']
@@ -105,6 +111,8 @@ SIGNATURE;
         $withoutOpenApiOption = (bool) $this->option('without-openapi');
         $validateOpenApiOption = (bool) $this->option('validate-openapi');
         $skipOpenApiValidation = (bool) $this->option('skip-openapi-validation');
+        $withPostmanOption = (bool) $this->option('with-postman');
+        $withoutPostmanOption = (bool) $this->option('without-postman');
 
         if ($withOpenApiOption && $withoutOpenApiOption) {
             $this->error('No se puede usar "--with-openapi" junto con "--without-openapi".');
@@ -118,8 +126,15 @@ SIGNATURE;
             return self::FAILURE;
         }
 
+        if ($withPostmanOption && $withoutPostmanOption) {
+            $this->error('No se puede usar "--with-postman" junto con "--without-postman".');
+
+            return self::FAILURE;
+        }
+
         $withOpenApi = $withOpenApiOption ? true : ($withoutOpenApiOption ? false : $defaultOpenApiEnabled);
         $validateOpenApi = $skipOpenApiValidation ? false : ($validateOpenApiOption ? true : $defaultOpenApiValidation);
+        $withPostman = $withPostmanOption ? true : ($withoutPostmanOption ? false : $defaultPostmanEnabled);
 
         $blueprintPaths = $this->locator->discover($blueprintsPath, $module, $entity);
 
@@ -147,23 +162,31 @@ SIGNATURE;
         ];
         $lastArchitecture = null;
 
-        foreach ($blueprintPaths as $path) {
+        $queue = $this->prepareBlueprintQueue($blueprintPaths);
+
+        foreach ($queue as $entry) {
+            $path = $entry['path'];
             $relative = $this->locator->relativePath($blueprintsPath, $path);
             $this->line(sprintf('<comment>Blueprint:</comment> %s', $relative));
 
-            try {
-                $blueprint = $this->parser->parse($path);
-            } catch (BlueprintParseException $exception) {
-                $this->error(sprintf('  Error al parsear "%s": %s', $relative, $exception->getMessage()));
-                $hasErrors = true;
-
-                continue;
-            } catch (Throwable $exception) {
-                $this->error(sprintf('  Error inesperado al parsear "%s": %s', $relative, $exception->getMessage()));
+            $parseException = $entry['parse_exception'];
+            if ($parseException instanceof BlueprintParseException) {
+                $this->error(sprintf('  Error al parsear "%s": %s', $relative, $parseException->getMessage()));
                 $hasErrors = true;
 
                 continue;
             }
+
+            $unexpectedParseException = $entry['unexpected_exception'];
+            if ($unexpectedParseException instanceof Throwable) {
+                $this->error(sprintf('  Error inesperado al parsear "%s": %s', $relative, $unexpectedParseException->getMessage()));
+                $hasErrors = true;
+
+                continue;
+            }
+
+            /** @var Blueprint $blueprint */
+            $blueprint = $entry['blueprint'];
 
             if ($architectureOverride !== null) {
                 $blueprint = $this->overrideArchitecture($blueprint, $architectureOverride);
@@ -204,14 +227,20 @@ SIGNATURE;
                 'force' => $force,
                 'with_openapi' => $withOpenApi,
                 'validate_openapi' => $validateOpenApi,
+                'with_postman' => $withPostman,
                 'paths' => [
                     'api' => $apiControllersPath,
                     'api_requests' => $formRequestsPath,
                     'api_resources' => $resourcesPath,
+                    'postman' => $postmanPath,
                 ],
                 'namespaces' => [
                     'api_requests' => $requestsNamespace,
                     'api_resources' => $resourcesNamespace,
+                ],
+                'postman' => [
+                    'base_url' => $defaultPostmanBaseUrl,
+                    'api_prefix' => $defaultPostmanApiPrefix,
                 ],
                 'form_requests' => [
                     'enabled' => $formRequestsEnabled,
@@ -345,6 +374,242 @@ SIGNATURE;
         }
 
         return strtolower($default);
+    }
+
+    private function normalizeUrl(mixed $value, string $default): string
+    {
+        if (! is_string($value)) {
+            return rtrim($default, '/');
+        }
+
+        $normalized = trim($value);
+
+        if ($normalized === '') {
+            return rtrim($default, '/');
+        }
+
+        return rtrim($normalized, '/');
+    }
+
+    private function normalizeApiPrefixOption(mixed $value, string $default): string
+    {
+        if (! is_string($value)) {
+            return $this->ensureLeadingSlash($default);
+        }
+
+        $normalized = trim($value);
+
+        if ($normalized === '') {
+            return '';
+        }
+
+        return $this->ensureLeadingSlash($normalized);
+    }
+
+    /**
+     * @param array<int, string> $paths
+     * @return array<int, array<string, mixed>>
+     */
+    private function prepareBlueprintQueue(array $paths): array
+    {
+        $entries = [];
+
+        foreach ($paths as $index => $path) {
+            $entry = [
+                'path' => $path,
+                'index' => $index,
+                'blueprint' => null,
+                'parse_exception' => null,
+                'unexpected_exception' => null,
+            ];
+
+            try {
+                $entry['blueprint'] = $this->parser->parse($path);
+            } catch (BlueprintParseException $exception) {
+                $entry['parse_exception'] = $exception;
+            } catch (Throwable $exception) {
+                $entry['unexpected_exception'] = $exception;
+            }
+
+            $entries[] = $entry;
+        }
+
+        $validEntries = array_values(array_filter(
+            $entries,
+            static fn (array $entry): bool => $entry['blueprint'] instanceof Blueprint,
+        ));
+
+        if ($validEntries === []) {
+            return $entries;
+        }
+
+        $sortedValid = $this->topologicallySortBlueprintEntries($validEntries);
+
+        $sorted = [];
+        $validIndex = 0;
+
+        foreach ($entries as $entry) {
+            if (! ($entry['blueprint'] instanceof Blueprint)) {
+                $sorted[] = $entry;
+                continue;
+            }
+
+            $sorted[] = $sortedValid[$validIndex] ?? $entry;
+            $validIndex++;
+        }
+
+        return $sorted;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     * @return array<int, array<string, mixed>>
+     */
+    private function topologicallySortBlueprintEntries(array $entries): array
+    {
+        $nodes = [];
+
+        foreach ($entries as $entry) {
+            /** @var Blueprint $blueprint */
+            $blueprint = $entry['blueprint'];
+            $key = $this->blueprintNodeKey($blueprint);
+
+            $nodes[$key] = [
+                'entry' => $entry,
+                'index' => $entry['index'],
+                'dependencies' => [],
+            ];
+        }
+
+        foreach ($nodes as $key => $node) {
+            /** @var Blueprint $currentBlueprint */
+            $currentBlueprint = $node['entry']['blueprint'];
+            $dependencies = $this->extractBlueprintDependencies($currentBlueprint);
+            $filtered = [];
+
+            foreach ($dependencies as $dependencyKey) {
+                if (! isset($nodes[$dependencyKey]) || $dependencyKey === $key) {
+                    continue;
+                }
+
+                $filtered[] = $dependencyKey;
+            }
+
+            $nodes[$key]['dependencies'] = array_values(array_unique($filtered));
+        }
+
+        $adjacency = [];
+        $inDegree = [];
+
+        foreach ($nodes as $key => $node) {
+            $inDegree[$key] = 0;
+            $adjacency[$key] = [];
+        }
+
+        foreach ($nodes as $key => $node) {
+            foreach ($node['dependencies'] as $dependencyKey) {
+                $adjacency[$dependencyKey][] = $key;
+                $inDegree[$key]++;
+            }
+        }
+
+        $queue = [];
+
+        foreach ($nodes as $key => $node) {
+            if ($inDegree[$key] === 0) {
+                $queue[] = $key;
+            }
+        }
+
+        usort($queue, static function (string $a, string $b) use ($nodes): int {
+            return $nodes[$a]['index'] <=> $nodes[$b]['index'];
+        });
+
+        $sortedKeys = [];
+
+        while ($queue !== []) {
+            $current = array_shift($queue);
+            $sortedKeys[] = $current;
+
+            foreach ($adjacency[$current] as $next) {
+                $inDegree[$next]--;
+
+                if ($inDegree[$next] === 0) {
+                    $queue[] = $next;
+                }
+            }
+
+            usort($queue, static function (string $a, string $b) use ($nodes): int {
+                return $nodes[$a]['index'] <=> $nodes[$b]['index'];
+            });
+        }
+
+        if (count($sortedKeys) < count($nodes)) {
+            $remaining = array_diff(array_keys($nodes), $sortedKeys);
+            usort($remaining, static function (string $a, string $b) use ($nodes): int {
+                return $nodes[$a]['index'] <=> $nodes[$b]['index'];
+            });
+
+            $sortedKeys = array_merge($sortedKeys, $remaining);
+        }
+
+        $sorted = [];
+
+        foreach ($sortedKeys as $key) {
+            $sorted[] = $nodes[$key]['entry'];
+        }
+
+        return $sorted;
+    }
+
+    private function blueprintNodeKey(Blueprint $blueprint): string
+    {
+        $module = $blueprint->module();
+        $moduleKey = $module !== null && $module !== '' ? Str::lower($module) : '_';
+
+        return $moduleKey . ':' . Str::lower($blueprint->entity());
+    }
+
+    private function blueprintNodeKeyFromParts(?string $module, string $entity): string
+    {
+        $moduleKey = $module !== null && $module !== '' ? Str::lower($module) : '_';
+
+        return $moduleKey . ':' . Str::lower($entity);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function extractBlueprintDependencies(Blueprint $blueprint): array
+    {
+        $dependencies = [];
+
+        foreach ($blueprint->relations() as $relation) {
+            if (Str::lower($relation->type) !== 'belongsto') {
+                continue;
+            }
+
+            $target = trim($relation->target);
+
+            if ($target === '') {
+                continue;
+            }
+
+            $dependencies[] = $this->blueprintNodeKeyFromParts($blueprint->module(), $target);
+        }
+
+        return array_values(array_unique($dependencies));
+    }
+
+    private function ensureLeadingSlash(string $value): string
+    {
+        $trimmed = trim($value);
+
+        if ($trimmed === '') {
+            return '';
+        }
+
+        return '/' . ltrim($trimmed, '/');
     }
 
     /**
