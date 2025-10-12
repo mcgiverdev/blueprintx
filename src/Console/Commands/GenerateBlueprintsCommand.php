@@ -167,6 +167,7 @@ SIGNATURE;
     $queue = $this->prepareBlueprintQueue($blueprintPaths);
     $authModelBlueprint = $this->findAuthModelBlueprint($queue, $authModelEntity);
     $authModelFields = $this->serializeAuthModelFields($authModelBlueprint);
+    $sanctumInstalled = $this->isSanctumInstalled();
 
         foreach ($queue as $entry) {
             $path = $entry['path'];
@@ -289,6 +290,7 @@ SIGNATURE;
                 'resources_namespace' => $resourcesNamespace,
                 'force' => $forceAuth,
                 'dry_run' => $dryRun,
+                'sanctum_installed' => $sanctumInstalled,
             ];
 
             if ($authModelData !== null) {
@@ -296,6 +298,10 @@ SIGNATURE;
             }
 
             $this->authScaffolding->ensure($authOptions);
+
+            if ($this->authScaffoldingRequiresSanctum($authModelBlueprint) && ! $sanctumInstalled) {
+                $this->renderSanctumReminder();
+            }
         }
 
         $totalProcessed = $summary['written'] + $summary['overwritten'] + $summary['skipped'] + $summary['preview'];
@@ -328,6 +334,47 @@ SIGNATURE;
         }
 
         return self::SUCCESS;
+    }
+
+    private function renderSanctumReminder(): void
+    {
+        $this->warn('Laravel Sanctum no está instalado y es necesario para el scaffolding de autenticación.');
+        $this->line('  composer require laravel/sanctum');
+        $this->line('  php artisan vendor:publish --provider="Laravel\\Sanctum\\SanctumServiceProvider" --tag=migrations');
+        $this->line('  php artisan migrate');
+        $this->line('  # Opcional: publicar configuración con --tag=config');
+    }
+
+    private function authScaffoldingRequiresSanctum(?Blueprint $blueprint): bool
+    {
+        return $blueprint instanceof Blueprint;
+    }
+
+    private function isSanctumInstalled(): bool
+    {
+        $path = base_path('composer.json');
+
+        if (! is_file($path)) {
+            return false;
+        }
+
+        $contents = file_get_contents($path);
+
+        if ($contents === false) {
+            return false;
+        }
+
+        $data = json_decode($contents, true);
+
+        if (! is_array($data)) {
+            return false;
+        }
+
+        $require = $data['require'] ?? [];
+        $requireDev = $data['require-dev'] ?? [];
+
+        return (is_array($require) && array_key_exists('laravel/sanctum', $require))
+            || (is_array($requireDev) && array_key_exists('laravel/sanctum', $requireDev));
     }
 
     private function normalizeNullableString(mixed $value): ?string

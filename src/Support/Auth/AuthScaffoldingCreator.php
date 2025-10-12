@@ -44,6 +44,7 @@ class AuthScaffoldingCreator
         $force = (bool) ($options['force'] ?? false);
         $dryRun = (bool) ($options['dry_run'] ?? false);
         $model = $options['model'] ?? null;
+        $sanctumInstalled = (bool) ($options['sanctum_installed'] ?? false);
 
         if (! is_array($model)) {
             $model = null;
@@ -55,6 +56,7 @@ class AuthScaffoldingCreator
         $this->ensureUserResource($architecture, $resourcesPath, $resourcesNamespace, $model, $force, $dryRun);
         $this->ensureApplicationUserModel($architecture, $model, $force, $dryRun);
     $this->ensurePersonalAccessTokensMigration($model, $force, $dryRun);
+        $this->ensureSanctumGuide($architecture, $sanctumInstalled, $force, $dryRun);
 
         if (! $dryRun) {
             $this->ensureRoutes($controllersNamespace);
@@ -799,6 +801,25 @@ class AuthScaffoldingCreator
         $normalized = str_replace(["\r\n", "\r"], "\n", $contents);
 
         return trim($normalized);
+    }
+
+    private function ensureSanctumGuide(string $architecture, bool $sanctumInstalled, bool $force, bool $dryRun): void
+    {
+        if ($dryRun || $sanctumInstalled) {
+            return;
+        }
+
+        $path = base_path('docs/README_SANCTUM.md');
+
+        if ($this->files->exists($path) && ! $force) {
+            return;
+        }
+
+        $this->files->ensureDirectoryExists((string) dirname($path));
+
+        $contents = $this->renderTemplate($architecture, 'sanctum-guide.stub.twig', []);
+
+        $this->files->put($path, $contents);
     }
 
     private function ensurePersonalAccessTokensMigration(?array $model, bool $force, bool $dryRun): void

@@ -1,0 +1,21 @@
+# Autenticación API con Laravel Sanctum
+
+Este proyecto fue generado con el scaffolding de autenticación de BlueprintX y espera que Laravel Sanctum esté disponible.
+
+## Pasos para instalar Sanctum
+
+1. Instala la dependencia:
+   ```bash
+   composer require laravel/sanctum
+   ```
+2. Publica y aplica las migraciones de Sanctum:
+   ```bash
+   php artisan vendor:publish --provider="Laravel\\Sanctum\\SanctumServiceProvider" --tag=migrations
+   php artisan migrate
+   ```
+3. (Opcional) Publica el archivo de configuración si necesitas personalizarlo:
+   ```bash
+   php artisan vendor:publish --provider="Laravel\\Sanctum\\SanctumServiceProvider" --tag=config
+   ```
+
+Tras completar estos pasos, la autenticación basada en tokens debería funcionar correctamente.

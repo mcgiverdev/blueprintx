@@ -4,6 +4,12 @@ title: Historial de versiones
 nav_order: 99
 ---
 
+## 1.1.1 · 2025-10-12
+
+- Añade una guía detallada para instalar Laravel Sanctum, requisito fundamental para habilitar la autenticación en el scaffolding generado.
+- Explica los pasos necesarios para la configuración de Sanctum, incluyendo la publicación de archivos de configuración, migraciones y ajustes recomendados en el middleware.
+- Facilita la integración de Sanctum en proyectos existentes, asegurando compatibilidad con las nuevas funcionalidades de autenticación.
+
 ## 1.1.0 · 2025-10-10
 
 - Añade scaffolding de autenticación con Laravel Sanctum, incluyendo controlador REST, requests validadas y rutas `login/register/logout/me` preconfiguradas.
