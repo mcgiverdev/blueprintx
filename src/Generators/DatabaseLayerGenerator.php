@@ -1415,7 +1415,7 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         return match ($type) {
-            'string', 'text' => $this->stringFactoryValue($field->name, $rules),
+            'string', 'text' => $this->stringFactoryValue($field, $rules, $needsStr),
             'integer', 'biginteger', 'bigint' => [
                 'expression' => 'fake()->numberBetween(1, 1000)',
                 'is_expression' => true,
@@ -2289,12 +2289,14 @@ class DatabaseLayerGenerator implements LayerGenerator
      * @param array<string, string> $rules
      * @return array<string, mixed>
      */
-    private function stringFactoryValue(string $name, array $rules): array
+    private function stringFactoryValue(Field $field, array $rules, bool &$needsStr): array
     {
+        $name = is_string($field->name) ? $field->name : '';
         $lower = Str::lower($name);
         $unique = array_key_exists('unique', $rules);
-        $decorate = static function (string $expression) use ($unique): string {
-            if (! $unique) {
+        $maxLength = $this->stringLengthFromRules($rules);
+        $decorate = static function (string $expression, bool $allowUnique = true) use ($unique): string {
+            if (! $unique || ! $allowUnique) {
                 return $expression;
             }
 
@@ -2304,6 +2306,48 @@ class DatabaseLayerGenerator implements LayerGenerator
 
             return $expression;
         };
+
+        if ($lower === 'remember_token') {
+            $needsStr = true;
+            $length = max(1, min($maxLength, 40));
+
+            return [
+                'expression' => 'Str::random(' . $length . ')',
+                'is_expression' => true,
+            ];
+        }
+
+        if (str_contains($lower, 'locale')) {
+            $locales = ['es', 'es_ES', 'en', 'en_US', 'pt_BR', 'fr', 'de'];
+            $filtered = array_values(array_filter($locales, static function (string $locale) use ($maxLength): bool {
+                return strlen($locale) <= $maxLength;
+            }));
+
+            if ($filtered === []) {
+                $filtered = ['en'];
+            }
+
+            return [
+                'expression' => $decorate('fake()->randomElement(' . $this->inlineArrayLiteral($filtered) . ')', false),
+                'is_expression' => true,
+            ];
+        }
+
+        if (str_contains($lower, 'timezone')) {
+            $timezones = ['UTC', 'America/Mexico_City', 'America/Bogota', 'America/Santiago', 'America/Sao_Paulo', 'Europe/Madrid'];
+            $filtered = array_values(array_filter($timezones, static function (string $timezone) use ($maxLength): bool {
+                return strlen($timezone) <= $maxLength;
+            }));
+
+            if ($filtered === []) {
+                $filtered = ['UTC'];
+            }
+
+            return [
+                'expression' => $decorate('fake()->randomElement(' . $this->inlineArrayLiteral($filtered) . ')', false),
+                'is_expression' => true,
+            ];
+        }
 
         if (str_contains($lower, 'email')) {
             $expression = $unique ? 'fake()->unique()->safeEmail()' : 'fake()->safeEmail()';
@@ -2335,10 +2379,38 @@ class DatabaseLayerGenerator implements LayerGenerator
             ];
         }
 
+        if ($maxLength <= 10) {
+            $pattern = str_repeat('?', max(1, $maxLength));
+
+            return [
+                'expression' => $decorate('fake()->lexify(\'' . $pattern . '\')'),
+                'is_expression' => true,
+            ];
+        }
+
+        if ($maxLength <= 60) {
+            return [
+                'expression' => $decorate('fake()->words(2, true)'),
+                'is_expression' => true,
+            ];
+        }
+
         return [
-            'expression' => $decorate('fake()->word()'),
+            'expression' => $decorate('fake()->text(' . min(120, $maxLength) . ')'),
             'is_expression' => true,
         ];
+    }
+
+    /**
+     * @param array<int, string> $values
+     */
+    private function inlineArrayLiteral(array $values): string
+    {
+        $encoded = array_map(static function (string $value): string {
+            return '\'' . addslashes($value) . '\'';
+        }, $values);
+
+        return '[' . implode(', ', $encoded) . ']';
     }
 
     /**
