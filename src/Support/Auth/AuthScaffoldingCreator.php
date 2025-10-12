@@ -54,6 +54,7 @@ class AuthScaffoldingCreator
         $this->ensureRegisterRequest($architecture, $requestsPath, $requestsNamespace, $model, $force, $dryRun);
         $this->ensureUserResource($architecture, $resourcesPath, $resourcesNamespace, $model, $force, $dryRun);
         $this->ensureApplicationUserModel($architecture, $model, $force, $dryRun);
+    $this->ensurePersonalAccessTokensMigration($model, $force, $dryRun);
 
         if (! $dryRun) {
             $this->ensureRoutes($controllersNamespace);
@@ -798,6 +799,80 @@ class AuthScaffoldingCreator
         $normalized = str_replace(["\r\n", "\r"], "\n", $contents);
 
         return trim($normalized);
+    }
+
+    private function ensurePersonalAccessTokensMigration(?array $model, bool $force, bool $dryRun): void
+    {
+        if ($dryRun || ! $this->authModelUsesUuidPrimaryKey($model)) {
+            return;
+        }
+
+        $paths = glob(base_path('database/migrations/*create_personal_access_tokens_table.php')) ?: [];
+
+        foreach ($paths as $path) {
+            if (! is_string($path) || $path === '') {
+                continue;
+            }
+
+            if (! $this->files->exists($path)) {
+                continue;
+            }
+
+            $original = $this->files->get($path);
+
+            if (str_contains($original, 'uuidMorphs(')) {
+                continue;
+            }
+
+            if (! $force && ! str_contains($original, 'morphs(')) {
+                continue;
+            }
+
+            $updated = preg_replace(
+                '/(->)\s*(nullableMorphs|morphs)\s*\(\s*([\'\"])tokenable\3\s*\)/',
+                '$1 uuidMorphs($3tokenable$3)',
+                $original,
+            );
+
+            if ($updated === null || $updated === $original) {
+                continue;
+            }
+
+            $this->files->put($path, $updated);
+        }
+    }
+
+    private function authModelUsesUuidPrimaryKey(?array $model): bool
+    {
+        if ($model === null) {
+            return false;
+        }
+
+        $fields = $model['fields'] ?? [];
+
+        if (! is_array($fields)) {
+            return false;
+        }
+
+        foreach ($fields as $definition) {
+            if (! is_array($definition)) {
+                continue;
+            }
+
+            $name = $definition['name'] ?? null;
+
+            if ($name !== 'id') {
+                continue;
+            }
+
+            $type = strtolower((string) ($definition['type'] ?? ''));
+
+            if (in_array($type, ['uuid', 'ulid'], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function splitRules(?string $rules): array
