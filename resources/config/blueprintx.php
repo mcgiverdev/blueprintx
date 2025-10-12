@@ -61,8 +61,10 @@ return [
         ],
         'postman' => [
             'enabled' => env('BLUEPRINTX_POSTMAN_ENABLED', false),
-            'base_url' => env('BLUEPRINTX_POSTMAN_BASE_URL', 'http://localhost'),
+            'base_url' => env('BLUEPRINTX_POSTMAN_BASE_URL', env('APP_URL', 'http://localhost')),
             'api_prefix' => env('BLUEPRINTX_POSTMAN_API_PREFIX', '/api'),
+            'collection_name' => env('BLUEPRINTX_POSTMAN_COLLECTION', 'Generated API'),
+            'version' => env('BLUEPRINTX_POSTMAN_VERSION', 'v1'),
         ],
     ],
 

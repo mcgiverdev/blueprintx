@@ -53,6 +53,7 @@ class AuthScaffoldingCreator
         $this->ensureLoginRequest($architecture, $requestsPath, $requestsNamespace, $force, $dryRun);
         $this->ensureRegisterRequest($architecture, $requestsPath, $requestsNamespace, $model, $force, $dryRun);
         $this->ensureUserResource($architecture, $resourcesPath, $resourcesNamespace, $model, $force, $dryRun);
+        $this->ensureApplicationUserModel($architecture, $model, $force, $dryRun);
 
         if (! $dryRun) {
             $this->ensureRoutes($controllersNamespace);
@@ -707,6 +708,96 @@ class AuthScaffoldingCreator
         $class = Str::studly($target) . 'Collection';
 
         return $namespace . '\\' . $class;
+    }
+
+    private function ensureApplicationUserModel(string $architecture, ?array $model, bool $force, bool $dryRun): void
+    {
+        if ($dryRun) {
+            return;
+        }
+
+        $context = $this->prepareApplicationUserModelContext($model);
+
+        if ($context === null) {
+            return;
+        }
+
+        $path = base_path('app/Models/User.php');
+        $this->files->ensureDirectoryExists((string) dirname($path));
+
+        $contents = $this->renderTemplate($architecture, 'user-model.stub.twig', $context);
+
+        if ($this->files->exists($path) && ! $force) {
+            $existing = $this->files->get($path);
+
+            if ($this->normalizePhpContents($existing) === $this->normalizePhpContents($contents)) {
+                return;
+            }
+        }
+
+        $this->files->put($path, $contents);
+    }
+
+    private function prepareApplicationUserModelContext(?array $model): ?array
+    {
+        $domainFqn = $this->resolveDomainUserFqn($model);
+
+        if ($domainFqn === null) {
+            return null;
+        }
+
+        return [
+            'namespace' => 'App\\Models',
+            'domain_fqn' => $domainFqn,
+            'domain_alias' => $this->deriveDomainAlias($domainFqn),
+        ];
+    }
+
+    private function resolveDomainUserFqn(?array $model): ?string
+    {
+        if ($model === null) {
+            return null;
+        }
+
+        $module = $model['module'] ?? null;
+        $entity = $model['entity'] ?? null;
+
+        if (! is_string($entity) || $entity === '') {
+            return null;
+        }
+
+        if (! is_string($module) || $module === '') {
+            $module = 'Shared';
+        }
+
+        $moduleSegment = Str::studly($module);
+        $entitySegment = Str::studly($entity);
+
+        return sprintf('App\\Domain\\%s\\Models\\%s', $moduleSegment, $entitySegment);
+    }
+
+    private function deriveDomainAlias(string $domainFqn): string
+    {
+        $basename = Str::afterLast($domainFqn, '\\');
+
+        if ($basename === '') {
+            return 'DomainUser';
+        }
+
+        $alias = 'Domain' . $basename;
+
+        if ($alias === $basename) {
+            $alias .= 'Base';
+        }
+
+        return $alias;
+    }
+
+    private function normalizePhpContents(string $contents): string
+    {
+        $normalized = str_replace(["\r\n", "\r"], "\n", $contents);
+
+        return trim($normalized);
     }
 
     private function splitRules(?string $rules): array

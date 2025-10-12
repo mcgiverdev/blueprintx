@@ -23,11 +23,24 @@ class PostmanLayerGenerator implements LayerGenerator
         'remember_token',
     ];
 
+    private const LOCALE_CANDIDATES = ['es', 'es_ES', 'en', 'en_US', 'pt_BR', 'fr', 'de'];
+
+    private const TIMEZONE_CANDIDATES = [
+        'UTC',
+        'America/Mexico_City',
+        'America/Bogota',
+        'America/Santiago',
+        'America/Sao_Paulo',
+        'Europe/Madrid',
+    ];
+
     public function __construct(
         private readonly OpenApiDocumentBuilder $builder,
         private readonly bool $enabledByDefault = false,
         private readonly string $defaultBaseUrl = 'http://localhost',
-        private readonly string $defaultApiPrefix = '/api'
+        private readonly string $defaultApiPrefix = '/api',
+        private readonly string $defaultCollectionName = 'Generated API',
+        private readonly string $defaultCollectionVersion = 'v1'
     ) {
     }
 
@@ -56,12 +69,14 @@ class PostmanLayerGenerator implements LayerGenerator
 
         $document = $this->builder->build($blueprint);
 
-        $baseUrl = $options['postman']['base_url'] ?? $this->defaultBaseUrl;
+        $postmanOptions = is_array($options['postman'] ?? null) ? $options['postman'] : [];
+
+        $baseUrl = $postmanOptions['base_url'] ?? $this->defaultBaseUrl;
         if (! is_string($baseUrl) || trim($baseUrl) === '') {
             $baseUrl = $this->defaultBaseUrl;
         }
 
-        $apiPrefix = $options['postman']['api_prefix'] ?? $this->defaultApiPrefix;
+        $apiPrefix = $postmanOptions['api_prefix'] ?? $this->defaultApiPrefix;
         if (! is_string($apiPrefix)) {
             $apiPrefix = $this->defaultApiPrefix;
         }
@@ -77,9 +92,34 @@ class PostmanLayerGenerator implements LayerGenerator
             $baseUrl = $this->defaultBaseUrl;
         }
 
-    $authFields = $this->resolveAuthFields($blueprint, $options);
+        $collectionNameOption = $postmanOptions['collection_name'] ?? $this->defaultCollectionName;
+        if (! is_string($collectionNameOption) || trim($collectionNameOption) === '') {
+            $collectionNameOption = $this->defaultCollectionName;
+        }
 
-    $collection = $this->buildCollection($blueprint, $document, $baseUrl, $normalizedApiPrefix, $authFields);
+        $versionOption = $postmanOptions['version'] ?? $this->defaultCollectionVersion;
+        if (! is_string($versionOption) || trim($versionOption) === '') {
+            $versionOption = $this->defaultCollectionVersion;
+        }
+
+        $path = $this->buildPath($blueprint, $options, $versionOption);
+        $existing = $this->loadExistingCollection($path);
+
+        $authFields = $this->resolveAuthFields($blueprint, $options);
+
+        $collection = $this->buildCollection(
+            $blueprint,
+            $document,
+            $baseUrl,
+            $normalizedApiPrefix,
+            $authFields,
+            $collectionNameOption,
+            $versionOption
+        );
+
+        if ($existing !== null) {
+            $collection = $this->mergeCollection($existing, $collection);
+        }
 
         try {
             $contents = json_encode($collection, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
@@ -88,8 +128,6 @@ class PostmanLayerGenerator implements LayerGenerator
 
             return $result;
         }
-
-        $path = $this->buildPath($blueprint, $options);
         $result->addFile(new GeneratedFile($path, $contents . PHP_EOL));
 
         return $result;
@@ -98,7 +136,15 @@ class PostmanLayerGenerator implements LayerGenerator
     /**
      * @param array<string, mixed> $document
      */
-    private function buildCollection(Blueprint $blueprint, array $document, string $baseUrl, string $apiPrefix, array $authFields): array
+    private function buildCollection(
+        Blueprint $blueprint,
+        array $document,
+        string $baseUrl,
+        string $apiPrefix,
+        array $authFields,
+        string $collectionName,
+        string $version
+    ): array
     {
         $entityName = Str::studly($blueprint->entity());
         $description = $document['info']['description'] ?? null;
@@ -110,7 +156,7 @@ class PostmanLayerGenerator implements LayerGenerator
 
         return [
             'info' => array_filter([
-                'name' => $entityName . ' API',
+                'name' => $collectionName,
                 '_postman_id' => (string) Str::uuid(),
                 'schema' => 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
                 'description' => is_string($description) && $description !== '' ? $description : null,
@@ -140,6 +186,12 @@ class PostmanLayerGenerator implements LayerGenerator
                     'value' => '',
                     'type' => 'string',
                     'description' => 'UUID del tenant para registrar nuevos usuarios.',
+                ],
+                [
+                    'key' => 'collection_version',
+                    'value' => $version,
+                    'type' => 'string',
+                    'description' => 'Versión lógica de la colección generada.',
                 ],
             ],
         ];
@@ -800,6 +852,8 @@ class PostmanLayerGenerator implements LayerGenerator
     private function sampleFieldValue(Field $field): mixed
     {
         $type = strtolower($field->type);
+        $rules = $this->parseRules($field->rules ?? null);
+        $stringLike = str_contains($type, 'string') || str_contains($type, 'text');
 
         return match (true) {
             str_contains($type, 'uuid') => (string) Str::uuid(),
@@ -809,8 +863,83 @@ class PostmanLayerGenerator implements LayerGenerator
             str_contains($type, 'date') && ! str_contains($type, 'time') => date('Y-m-d'),
             str_contains($type, 'time') => date('c'),
             str_contains($type, 'json') => ['sample' => 'value'],
-            default => 'Sample ' . Str::title(str_replace(['_', '-'], ' ', $field->name)),
+            default => $this->stringSampleValue($field, $rules, $stringLike),
         };
+    }
+
+    /**
+     * @param array<string, string> $rules
+     */
+    private function stringSampleValue(Field $field, array $rules, bool $stringLike): string
+    {
+        $name = is_string($field->name) ? $field->name : '';
+        $lower = Str::lower($name);
+        $maxLength = $this->stringLengthFromRules($rules);
+
+        if ($lower === 'remember_token') {
+            return $this->truncateSample('token-placeholder', $maxLength);
+        }
+
+        if (str_contains($lower, 'email')) {
+            return $this->truncateSample('admin@example.com', $maxLength);
+        }
+
+        if (str_contains($lower, 'password')) {
+            return $this->truncateSample('password', $maxLength);
+        }
+
+        if (str_contains($lower, 'locale')) {
+            return $this->firstValueWithin(self::LOCALE_CANDIDATES, $maxLength, 'en');
+        }
+
+        if (str_contains($lower, 'timezone')) {
+            return $this->firstValueWithin(self::TIMEZONE_CANDIDATES, $maxLength, 'UTC');
+        }
+
+        if (str_contains($lower, 'name')) {
+            return $this->truncateSample('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $maxLength);
+        }
+
+        if (! $stringLike) {
+            return $this->truncateSample('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $maxLength);
+        }
+
+        if ($maxLength <= 10) {
+            return $this->truncateSample('value-' . substr(Str::slug($name, '-'), 0, 4), $maxLength);
+        }
+
+        if ($maxLength <= 60) {
+            return $this->truncateSample('Sample Value', $maxLength);
+        }
+
+        return $this->truncateSample('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $maxLength);
+    }
+
+    /**
+     * @param array<int, string> $candidates
+     */
+    private function firstValueWithin(array $candidates, int $maxLength, string $fallback): string
+    {
+        foreach ($candidates as $candidate) {
+            if (strlen($candidate) <= $maxLength) {
+                return $candidate;
+            }
+        }
+
+        return $this->truncateSample($fallback, $maxLength);
+    }
+
+    private function truncateSample(string $value, int $maxLength): string
+    {
+        if ($maxLength <= 0) {
+            return $value;
+        }
+
+        if (strlen($value) <= $maxLength) {
+            return $value;
+        }
+
+        return substr($value, 0, $maxLength);
     }
 
     private function formatDecimalSample(Field $field): string
@@ -823,6 +952,42 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         return number_format($value, max(0, (int) $scale), '.', '');
+    }
+
+    /**
+     * @param array<string, mixed>|string|null $rules
+     * @return array<string, string>
+     */
+    private function parseRules(mixed $rules): array
+    {
+        if (! is_string($rules) || trim($rules) === '') {
+            return [];
+        }
+
+        $segments = array_filter(array_map('trim', explode('|', $rules)));
+        $result = [];
+
+        foreach ($segments as $segment) {
+            [$rule, $parameter] = array_pad(explode(':', $segment, 2), 2, null);
+            $ruleLower = Str::lower($rule);
+            $result[$ruleLower] = $parameter;
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, string> $rules
+     */
+    private function stringLengthFromRules(array $rules): int
+    {
+        $max = $rules['max'] ?? null;
+
+        if ($max !== null && is_numeric($max)) {
+            return max(1, (int) $max);
+        }
+
+        return 255;
     }
 
     /**
@@ -924,17 +1089,135 @@ class PostmanLayerGenerator implements LayerGenerator
     /**
      * @param array<string, mixed> $options
      */
-    private function buildPath(Blueprint $blueprint, array $options): string
+    private function buildPath(Blueprint $blueprint, array $options, string $version): string
     {
-        $basePath = $options['paths']['postman'] ?? 'docs/postman';
-        $module = $blueprint->module();
-
-        if ($module !== null && $module !== '') {
-            $basePath .= '/' . Str::studly($module);
+    $paths = is_array($options['paths'] ?? null) ? $options['paths'] : [];
+    $basePath = $paths['postman'] ?? 'docs/postman';
+        $sanitizedVersion = preg_replace('/[^A-Za-z0-9_.-]/', '', $version);
+        if ($sanitizedVersion === null || $sanitizedVersion === '') {
+            $sanitizedVersion = $this->defaultCollectionVersion;
         }
 
-        $entityName = Str::studly($blueprint->entity());
+        return sprintf('%s/collection.%s.postman.json', trim($basePath, '/'), $sanitizedVersion);
+    }
 
-        return sprintf('%s/%s.postman.json', trim($basePath, '/'), $entityName);
+    private function loadExistingCollection(string $path): ?array
+    {
+        $absolute = base_path($path);
+
+        if (! is_file($absolute)) {
+            return null;
+        }
+
+        $contents = file_get_contents($absolute);
+
+        if ($contents === false || trim($contents) === '') {
+            return null;
+        }
+
+        $decoded = json_decode($contents, true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    private function mergeCollection(array $existing, array $incoming): array
+    {
+        $merged = $existing;
+
+        if (isset($incoming['info']) && is_array($incoming['info'])) {
+            $merged['info'] = $incoming['info'];
+        }
+
+        $mergedVariables = $this->indexVariablesByKey($merged['variable'] ?? []);
+        $incomingVariables = $this->indexVariablesByKey($incoming['variable'] ?? []);
+
+        foreach ($incomingVariables as $key => $value) {
+            $mergedVariables[$key] = $value;
+        }
+
+        $mergedItems = $this->indexItemsByName($merged['item'] ?? []);
+        $incomingItems = $this->indexItemsByName($incoming['item'] ?? []);
+
+        foreach ($incomingItems as $name => $item) {
+            $mergedItems[$name] = $item;
+        }
+
+        $merged['variable'] = array_values($mergedVariables);
+        $merged['item'] = $this->normalizeItemOrder($mergedItems);
+
+        return $merged;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @return array<string, array<string, mixed>>
+     */
+    private function indexItemsByName(array $items): array
+    {
+        $indexed = [];
+
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $name = $item['name'] ?? null;
+
+            if (! is_string($name) || $name === '') {
+                continue;
+            }
+
+            $indexed[$name] = $item;
+        }
+
+        return $indexed;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $items
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalizeItemOrder(array $items): array
+    {
+        $ordered = [];
+
+        if (isset($items['Autenticación'])) {
+            $ordered[] = $items['Autenticación'];
+            unset($items['Autenticación']);
+        }
+
+        if ($items !== []) {
+            uksort($items, static fn ($a, $b): int => strcasecmp((string) $a, (string) $b));
+            foreach ($items as $item) {
+                $ordered[] = $item;
+            }
+        }
+
+        return $ordered;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $variables
+     * @return array<string, array<string, mixed>>
+     */
+    private function indexVariablesByKey(array $variables): array
+    {
+        $indexed = [];
+
+        foreach ($variables as $variable) {
+            if (! is_array($variable)) {
+                continue;
+            }
+
+            $key = $variable['key'] ?? null;
+
+            if (! is_string($key) || $key === '') {
+                continue;
+            }
+
+            $indexed[$key] = $variable;
+        }
+
+        return $indexed;
     }
 }

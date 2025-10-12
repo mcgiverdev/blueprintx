@@ -219,15 +219,35 @@ class BlueprintXServiceProvider extends ServiceProvider
                 $feature = $app['config']->get('blueprintx.features.postman', []);
 
                 $enabled = (bool) ($feature['enabled'] ?? false);
-                $baseUrl = $feature['base_url'] ?? 'http://localhost/api';
+
+                $defaultBaseUrl = config('app.url') ?: 'http://localhost';
+                $baseUrl = $feature['base_url'] ?? $defaultBaseUrl;
                 if (! is_string($baseUrl) || $baseUrl === '') {
-                    $baseUrl = 'http://localhost/api';
+                    $baseUrl = $defaultBaseUrl;
+                }
+
+                $apiPrefix = $feature['api_prefix'] ?? '/api';
+                if (! is_string($apiPrefix) || $apiPrefix === '') {
+                    $apiPrefix = '/api';
+                }
+
+                $collectionName = $feature['collection_name'] ?? 'Generated API';
+                if (! is_string($collectionName) || $collectionName === '') {
+                    $collectionName = 'Generated API';
+                }
+
+                $version = $feature['version'] ?? 'v1';
+                if (! is_string($version) || $version === '') {
+                    $version = 'v1';
                 }
 
                 return new PostmanLayerGenerator(
                     $app->make(OpenApiDocumentBuilder::class),
                     $enabled,
-                    $baseUrl
+                    $baseUrl,
+                    $apiPrefix,
+                    $collectionName,
+                    $version
                 );
             }
         );

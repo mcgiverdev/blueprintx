@@ -1,0 +1,11 @@
+<?php
+
+namespace {{ namespace }};
+
+use {{ domain_fqn }} as {{ domain_alias }};
+use Laravel\Sanctum\HasApiTokens;
+
+class User extends {{ domain_alias }}
+{
+    use HasApiTokens;
+}
