@@ -12,11 +12,20 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+{% if migration.use_db ?? false %}
+use Illuminate\Support\Facades\DB;
+{% endif %}
 
 return new class extends Migration
 {
     public function up(): void
     {
+{% if migration.raw_up is defined and migration.raw_up %}
+{% for statement in migration.raw_up %}
+        {{ statement }}
+{% endfor %}
+
+{% endif %}
     {% if migration.mode == 'alter' %}
     Schema::table('{{ migration.table }}', function (Blueprint $table): void {
 {% for column in migration.columns %}
@@ -38,6 +47,12 @@ return new class extends Migration
 
     public function down(): void
     {
+{% if migration.raw_down is defined and migration.raw_down %}
+{% for statement in migration.raw_down %}
+        {{ statement }}
+{% endfor %}
+
+{% endif %}
     {% if migration.mode == 'alter' %}
     Schema::table('{{ migration.table }}', function (Blueprint $table): void {
 {% for drop in migration.drops %}

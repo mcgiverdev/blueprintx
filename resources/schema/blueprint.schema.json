@@ -159,9 +159,193 @@
         "audited": {
           "type": "boolean"
         },
-        "versioned": {
-          "type": "boolean"
-        }
+            "versioned": {
+              "type": "boolean"
+            },
+            "migration": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "reserved": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "baseline": {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  ]
+                },
+                "reserved_baseline": {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  ]
+                },
+                "raw": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "up": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "down": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "custom_prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reserved_raw": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "up": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "down": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "reserved_statements": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "up": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "down": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "reserved_prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^\\d{4}_\\d{2}_\\d{2}_\\d{6}$"
+                },
+                "alter_prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^\\d{4}_\\d{2}_\\d{2}_\\d{6}$"
+                }
+              }
+            }
       }
     },
     "api": {

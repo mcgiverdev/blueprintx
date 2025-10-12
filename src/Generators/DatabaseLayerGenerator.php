@@ -57,6 +57,7 @@ class DatabaseLayerGenerator implements LayerGenerator
         $reservedAlter = null;
 
         if ($reservedMigration) {
+            $this->applyReservedBaseMigrationAdjustments($blueprint, $paths['migration'] ?? null);
             $reservedAlter = $this->buildReservedAlterMigration($blueprint, $relationsByField);
         }
 
@@ -239,19 +240,67 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function migrationPrefix(Blueprint $blueprint, array $options): string
     {
+        $customPrefix = $this->customMigrationPrefix($blueprint);
         $history = $this->loadHistory();
         $key = $this->historyKey($blueprint);
 
-        if (isset($history['migrations'][$key]['prefix'])) {
-            return $history['migrations'][$key]['prefix'];
+        if (isset($history['migrations'][$key]) && is_array($history['migrations'][$key])) {
+            $storedPrefix = $history['migrations'][$key]['prefix'] ?? null;
+
+            if ($storedPrefix !== null) {
+                $isReserved = ($history['migrations'][$key]['reserved'] ?? false) === true;
+
+                if ($customPrefix !== null && ! $isReserved && $customPrefix !== $storedPrefix) {
+                    $existing = $this->findExistingMigration($blueprint, $options);
+
+                    if ($existing !== null && $existing['prefix'] !== $customPrefix) {
+                        $renamedPrefix = $this->renameMigrationFile(
+                            $existing['path'],
+                            $customPrefix,
+                            $this->tableName($blueprint)
+                        );
+
+                        if ($renamedPrefix !== null) {
+                            $customPrefix = $renamedPrefix;
+                        }
+                    }
+
+                    if ($this->lastGeneratedTimestamp === null || strcmp($customPrefix, $this->lastGeneratedTimestamp) > 0) {
+                        $this->lastGeneratedTimestamp = $customPrefix;
+                    }
+
+                    $this->storeMigrationHistory($blueprint, $customPrefix);
+
+                    return $customPrefix;
+                }
+
+                return $storedPrefix;
+            }
         }
 
         $existing = $this->findExistingMigration($blueprint, $options);
 
         if ($existing !== null) {
             $isReserved = $this->shouldReserveMigration($blueprint, $existing);
+            $prefix = $existing['prefix'];
 
-            if ($existing['style'] === 'legacy') {
+            $customApplied = false;
+
+            if ($customPrefix !== null && ! $isReserved) {
+                if ($existing['prefix'] !== $customPrefix) {
+                    $renamedPrefix = $this->renameMigrationFile(
+                        $existing['path'],
+                        $customPrefix,
+                        $this->tableName($blueprint)
+                    );
+
+                    $prefix = $renamedPrefix ?? $customPrefix;
+                } else {
+                    $prefix = $customPrefix;
+                }
+
+                $customApplied = true;
+            } elseif ($existing['style'] === 'legacy') {
                 $newPrefix = $this->generateNextTimestamp();
                 $renamedPrefix = $this->renameMigrationFile(
                     $existing['path'],
@@ -260,19 +309,23 @@ class DatabaseLayerGenerator implements LayerGenerator
                 );
 
                 $prefix = $renamedPrefix ?? $newPrefix;
-            } else {
-                $prefix = $existing['prefix'];
+            } elseif (! $isReserved && $this->lastGeneratedTimestamp !== null && $prefix <= $this->lastGeneratedTimestamp) {
+                $desiredPrefix = $this->generateNextTimestamp();
+                $renamedPrefix = $this->renameMigrationFile(
+                    $existing['path'],
+                    $desiredPrefix,
+                    $this->tableName($blueprint)
+                );
 
-                if (! $isReserved && $this->lastGeneratedTimestamp !== null && $prefix <= $this->lastGeneratedTimestamp) {
-                    $desiredPrefix = $this->generateNextTimestamp();
-                    $renamedPrefix = $this->renameMigrationFile(
-                        $existing['path'],
-                        $desiredPrefix,
-                        $this->tableName($blueprint)
-                    );
+                $prefix = $renamedPrefix ?? $desiredPrefix;
+            }
 
-                    $prefix = $renamedPrefix ?? $desiredPrefix;
-                } elseif (! $isReserved) {
+            if (! $isReserved) {
+                if ($customApplied) {
+                    if ($this->lastGeneratedTimestamp === null || strcmp($prefix, $this->lastGeneratedTimestamp) > 0) {
+                        $this->lastGeneratedTimestamp = $prefix;
+                    }
+                } elseif ($this->lastGeneratedTimestamp === null || strcmp($prefix, $this->lastGeneratedTimestamp) > 0) {
                     $this->lastGeneratedTimestamp = $prefix;
                 }
             }
@@ -280,6 +333,16 @@ class DatabaseLayerGenerator implements LayerGenerator
             $this->storeMigrationHistory($blueprint, $prefix);
 
             return $prefix;
+        }
+
+        if ($customPrefix !== null) {
+            if ($this->lastGeneratedTimestamp === null || strcmp($customPrefix, $this->lastGeneratedTimestamp) > 0) {
+                $this->lastGeneratedTimestamp = $customPrefix;
+            }
+
+            $this->storeMigrationHistory($blueprint, $customPrefix);
+
+            return $customPrefix;
         }
 
         $prefix = $this->generateNextTimestamp();
@@ -440,6 +503,9 @@ class DatabaseLayerGenerator implements LayerGenerator
             'columns' => $columns,
             'drops' => [],
             'mode' => 'create',
+            'raw_up' => [],
+            'raw_down' => [],
+            'use_db' => false,
         ];
     }
 
@@ -462,7 +528,14 @@ class DatabaseLayerGenerator implements LayerGenerator
     {
         $augmented = $this->reservedAugmentations($blueprint, $relationsByField);
 
-        if ($augmented['fields'] === [] && ! $augmented['soft_deletes']) {
+        $customStatements = $this->reservedCustomStatements($blueprint);
+
+        if (
+            $augmented['fields'] === []
+            && ! $augmented['soft_deletes']
+            && $customStatements['up'] === []
+            && $customStatements['down'] === []
+        ) {
             return null;
         }
 
@@ -502,6 +575,9 @@ class DatabaseLayerGenerator implements LayerGenerator
             'columns' => $columns,
             'drops' => $drops,
             'mode' => 'alter',
+            'raw_up' => $customStatements['up'],
+            'raw_down' => $customStatements['down'],
+            'use_db' => $this->statementsRequireDb(array_merge($customStatements['up'], $customStatements['down'])),
         ];
 
         $metadata = [
@@ -513,6 +589,58 @@ class DatabaseLayerGenerator implements LayerGenerator
             'context' => $context,
             'metadata' => $metadata,
         ];
+    }
+
+    private function applyReservedBaseMigrationAdjustments(Blueprint $blueprint, ?string $migrationPath): void
+    {
+        if ($migrationPath === null || ! file_exists($migrationPath)) {
+            return;
+        }
+
+        $idField = null;
+
+        foreach ($blueprint->fields() as $field) {
+            if (Str::lower((string) $field->name) === 'id') {
+                $idField = $field;
+                break;
+            }
+        }
+
+        if ($idField === null) {
+            return;
+        }
+
+        $type = Str::lower((string) ($idField->type ?? ''));
+
+        if (! in_array($type, ['uuid', 'ulid'], true)) {
+            return;
+        }
+
+        $contents = file_get_contents($migrationPath);
+
+        if ($contents === false) {
+            return;
+        }
+
+        $needle = $type === 'ulid' ? "->ulid('id')" : "->uuid('id')";
+
+        if (str_contains($contents, $needle)) {
+            return;
+        }
+
+        $replacement = $type === 'ulid'
+            ? "\$table->ulid('id')->primary();"
+            : "\$table->uuid('id')->primary();";
+
+        $updated = preg_replace('/\\$table->id\(\);/', $replacement, $contents, 1, $replacements);
+
+        if ($updated === null || $replacements === 0) {
+            return;
+        }
+
+        $updated = str_replace("\$table->foreignId('user_id')->nullable()->index();", "\$table->foreignUuid('user_id')->nullable()->index();", $updated);
+
+        file_put_contents($migrationPath, $updated);
     }
 
     /**
@@ -539,6 +667,14 @@ class DatabaseLayerGenerator implements LayerGenerator
                     $recorded[] = $lower;
                 }
             }
+        }
+
+        $appliedFields = $this->reservedFieldsFromExistingAlterFiles($blueprint, $entry);
+
+        if ($appliedFields !== []) {
+            $recorded = array_values(array_intersect($recorded, $appliedFields));
+        } elseif (isset($entry['reserved_alters'])) {
+            $recorded = [];
         }
 
         $registered = array_unique(array_merge($baseline, $recorded));
@@ -584,18 +720,11 @@ class DatabaseLayerGenerator implements LayerGenerator
         $baseline = ['id', 'created_at', 'updated_at'];
 
         $configured = self::RESERVED_TABLE_BASELINES[$table]['fields'] ?? [];
+        $baseline = array_merge($baseline, $this->collectFieldList($configured));
 
-        foreach ($configured as $field) {
-            if (! is_string($field)) {
-                continue;
-            }
+        $baseline = array_merge($baseline, $this->reservedBaselineFromBlueprint($blueprint));
 
-            $field = Str::lower($field);
-
-            if ($field !== '') {
-                $baseline[] = $field;
-            }
-        }
+        $historyBaseline = [];
 
         if (isset($historyEntry['reserved_baseline']) && is_array($historyEntry['reserved_baseline'])) {
             foreach ($historyEntry['reserved_baseline'] as $field) {
@@ -606,12 +735,304 @@ class DatabaseLayerGenerator implements LayerGenerator
                 $field = Str::lower($field);
 
                 if ($field !== '') {
-                    $baseline[] = $field;
+                    $historyBaseline[] = $field;
                 }
             }
         }
 
+        $appliedFields = $this->reservedFieldsFromExistingAlterFiles($blueprint, $historyEntry);
+
+        if ($appliedFields !== []) {
+            $historyBaseline = array_values(array_intersect($historyBaseline, $appliedFields));
+        } elseif (isset($historyEntry['reserved_alters'])) {
+            $historyBaseline = [];
+        }
+
+        $baseline = array_merge($baseline, $historyBaseline);
+
         return array_values(array_unique($baseline));
+    }
+
+    private function reservedFieldsFromExistingAlterFiles(Blueprint $blueprint, array $historyEntry): array
+    {
+        if (! isset($historyEntry['reserved_alters']) || ! is_array($historyEntry['reserved_alters'])) {
+            return [];
+        }
+
+        $table = $this->tableName($blueprint);
+        $existing = [];
+
+        foreach ($historyEntry['reserved_alters'] as $alter) {
+            if (! is_array($alter)) {
+                continue;
+            }
+
+            $prefix = $alter['prefix'] ?? null;
+
+            if (! is_string($prefix) || $prefix === '') {
+                continue;
+            }
+
+            $path = $this->toAbsolutePath('database/migrations/' . $prefix . '_alter_' . $table . '_table.php');
+
+            if (! is_file($path)) {
+                continue;
+            }
+
+            if (! isset($alter['fields']) || ! is_array($alter['fields'])) {
+                continue;
+            }
+
+            foreach ($alter['fields'] as $field) {
+                if (! is_string($field)) {
+                    continue;
+                }
+
+                $lower = Str::lower($field);
+
+                if ($lower !== '') {
+                    $existing[] = $lower;
+                }
+            }
+        }
+
+        return array_values(array_unique($existing));
+    }
+
+    private function reservedBaselineFromBlueprint(Blueprint $blueprint): array
+    {
+        $fields = [];
+
+        $optionPaths = [
+            ['reserved_baseline'],
+            ['migration', 'reserved_baseline'],
+            ['migration', 'baseline'],
+            ['reserved_migration', 'baseline'],
+        ];
+
+        $metadataPaths = [
+            ['reserved_baseline'],
+            ['migration', 'reserved_baseline'],
+            ['migration', 'baseline'],
+            ['migration_reserved', 'baseline'],
+        ];
+
+        foreach ($this->extractNestedValues($blueprint->options(), $optionPaths) as $value) {
+            $fields = array_merge($fields, $this->collectFieldList($value));
+        }
+
+        foreach ($this->extractNestedValues($blueprint->metadata(), $metadataPaths) as $value) {
+            $fields = array_merge($fields, $this->collectFieldList($value));
+        }
+
+        return array_values(array_unique($fields));
+    }
+
+    /**
+     * @param array<string, mixed> $source
+     * @param array<int, array<int, string>> $paths
+     * @return array<int, mixed>
+     */
+    private function extractNestedValues(array $source, array $paths): array
+    {
+        $results = [];
+
+        foreach ($paths as $path) {
+            $cursor = $source;
+            $found = true;
+
+            foreach ($path as $segment) {
+                if (! is_array($cursor) || ! array_key_exists($segment, $cursor)) {
+                    $found = false;
+                    break;
+                }
+
+                $cursor = $cursor[$segment];
+            }
+
+            if ($found) {
+                $results[] = $cursor;
+            }
+        }
+
+        return $results;
+    }
+
+    private function reservedCustomStatements(Blueprint $blueprint): array
+    {
+        $up = [];
+        $down = [];
+
+        $optionPaths = [
+            ['migration', 'raw'],
+            ['migration', 'reserved_raw'],
+            ['migration', 'reserved_statements'],
+        ];
+
+        $metadataPaths = [
+            ['migration', 'raw'],
+            ['migration', 'reserved_raw'],
+            ['migration', 'reserved_statements'],
+        ];
+
+        foreach ($this->extractNestedValues($blueprint->options(), $optionPaths) as $value) {
+            $this->mergeStatementConfig($value, $up, $down);
+        }
+
+        foreach ($this->extractNestedValues($blueprint->metadata(), $metadataPaths) as $value) {
+            $this->mergeStatementConfig($value, $up, $down);
+        }
+
+        return [
+            'up' => array_values(array_unique($up)),
+            'down' => array_values(array_unique($down)),
+        ];
+    }
+
+    private function mergeStatementConfig(mixed $value, array &$up, array &$down): void
+    {
+        if (! is_array($value)) {
+            return;
+        }
+
+        $up = array_merge($up, $this->collectStatementList($value['up'] ?? null));
+        $down = array_merge($down, $this->collectStatementList($value['down'] ?? null));
+    }
+
+    private function collectStatementList(mixed $value): array
+    {
+        $statements = [];
+
+        if (is_string($value)) {
+            $statement = trim($value);
+
+            if ($statement !== '') {
+                $statements[] = $statement;
+            }
+
+            return $statements;
+        }
+
+        if (! is_array($value)) {
+            return $statements;
+        }
+
+        foreach ($value as $item) {
+            $statements = array_merge($statements, $this->collectStatementList($item));
+        }
+
+        return $statements;
+    }
+
+    private function statementsRequireDb(array $statements): bool
+    {
+        foreach ($statements as $statement) {
+            if (! is_string($statement)) {
+                continue;
+            }
+
+            if (str_contains($statement, 'DB::')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function reservedAlterCustomPrefix(Blueprint $blueprint): ?string
+    {
+        $paths = [
+            ['migration', 'reserved_prefix'],
+            ['migration', 'alter_prefix'],
+        ];
+
+        foreach ($this->extractNestedValues($blueprint->options(), $paths) as $value) {
+            $prefix = $this->normalizeTimestampPrefix($value);
+
+            if ($prefix !== null) {
+                return $prefix;
+            }
+        }
+
+        foreach ($this->extractNestedValues($blueprint->metadata(), $paths) as $value) {
+            $prefix = $this->normalizeTimestampPrefix($value);
+
+            if ($prefix !== null) {
+                return $prefix;
+            }
+        }
+
+        return null;
+    }
+
+    private function customMigrationPrefix(Blueprint $blueprint): ?string
+    {
+        $paths = [
+            ['migration', 'prefix'],
+            ['migration', 'custom_prefix'],
+        ];
+
+        foreach ($this->extractNestedValues($blueprint->options(), $paths) as $value) {
+            $prefix = $this->normalizeTimestampPrefix($value);
+
+            if ($prefix !== null) {
+                return $prefix;
+            }
+        }
+
+        foreach ($this->extractNestedValues($blueprint->metadata(), $paths) as $value) {
+            $prefix = $this->normalizeTimestampPrefix($value);
+
+            if ($prefix !== null) {
+                return $prefix;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeTimestampPrefix(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $prefix = trim($value);
+
+        if ($prefix === '') {
+            return null;
+        }
+
+        if (! preg_match('/^\d{4}_\d{2}_\d{2}_\d{6}$/', $prefix)) {
+            return null;
+        }
+
+        return $prefix;
+    }
+
+    private function collectFieldList(mixed $value): array
+    {
+        $fields = [];
+
+        if (is_string($value)) {
+            $normalized = Str::lower(trim($value));
+
+            if ($normalized !== '') {
+                $fields[] = $normalized;
+            }
+
+            return $fields;
+        }
+
+        if (! is_array($value)) {
+            return $fields;
+        }
+
+        foreach ($value as $item) {
+            $fields = array_merge($fields, $this->collectFieldList($item));
+        }
+
+        return $fields;
     }
 
     private function reservedWantsSoftDeletes(Blueprint $blueprint): bool
@@ -634,7 +1055,17 @@ class DatabaseLayerGenerator implements LayerGenerator
     private function resolveReservedAlterPath(Blueprint $blueprint, array $options): array
     {
         $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
-        $prefix = $this->generateNextTimestamp();
+        $customPrefix = $this->reservedAlterCustomPrefix($blueprint);
+
+        if ($customPrefix !== null) {
+            $prefix = $customPrefix;
+
+            if ($this->lastGeneratedTimestamp === null || strcmp($prefix, $this->lastGeneratedTimestamp) > 0) {
+                $this->lastGeneratedTimestamp = $prefix;
+            }
+        } else {
+            $prefix = $this->generateNextTimestamp();
+        }
         $filename = sprintf('%s_alter_%s_table.php', $prefix, $this->tableName($blueprint));
 
         return [
@@ -793,14 +1224,26 @@ class DatabaseLayerGenerator implements LayerGenerator
         $needsStr = false;
 
         foreach ($blueprint->fields() as $field) {
-            if ($field->name === 'id' || in_array($field->name, ['created_at', 'updated_at', 'deleted_at'], true)) {
+            $name = $field->name;
+
+            if (! is_string($name) || $name === '') {
                 continue;
             }
 
-            $relation = $relationsByField[$field->name] ?? null;
+            $type = Str::lower((string) $field->type);
+
+            if ($name === 'id' && ! in_array($type, ['uuid', 'ulid'], true)) {
+                continue;
+            }
+
+            if ($name !== 'id' && in_array($name, ['created_at', 'updated_at', 'deleted_at'], true)) {
+                continue;
+            }
+
+            $relation = $relationsByField[$name] ?? null;
             $value = $this->factoryValueForField($field, $relation, $needsStr);
             $properties[] = [
-                'name' => $field->name,
+                'name' => $name,
                 'value' => $value['expression'],
                 'is_expression' => $value['is_expression'],
             ];
