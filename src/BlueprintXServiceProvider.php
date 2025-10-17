@@ -4,6 +4,7 @@ namespace BlueprintX;
 
 use BlueprintX\Console\Commands\GenerateBlueprintsCommand;
 use BlueprintX\Console\Commands\ListBlueprintsCommand;
+use BlueprintX\Console\Commands\RollbackBlueprintsCommand;
 use BlueprintX\Console\Commands\ValidateBlueprintsCommand;
 use BlueprintX\Contracts\BlueprintParser;
 use BlueprintX\Contracts\BlueprintValidator as BlueprintValidatorContract;
@@ -13,6 +14,7 @@ use BlueprintX\Generators\ApiLayerGenerator;
 use BlueprintX\Generators\DocsLayerGenerator;
 use BlueprintX\Generators\TestsLayerGenerator;
 use BlueprintX\Kernel\DriverManager;
+use BlueprintX\Kernel\History\GenerationHistoryManager;
 use BlueprintX\Kernel\BlueprintLocator;
 use BlueprintX\Generators\PostmanLayerGenerator;
 use BlueprintX\Kernel\GenerationPipeline;
@@ -283,6 +285,27 @@ class BlueprintXServiceProvider extends ServiceProvider
         );
 
         $this->app->singleton(
+            GenerationHistoryManager::class,
+            function ($app) {
+                $historyConfig = $app['config']->get('blueprintx.history', []);
+                $enabled = array_key_exists('enabled', $historyConfig) ? (bool) $historyConfig['enabled'] : true;
+                $path = $historyConfig['path'] ?? null;
+
+                if (! is_string($path) || $path === '') {
+                    if (is_object($app) && method_exists($app, 'storagePath')) {
+                        $path = $app->storagePath('app/blueprintx/history');
+                    } elseif (function_exists('storage_path')) {
+                        $path = storage_path('app/blueprintx/history');
+                    } else {
+                        $path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'blueprintx-history';
+                    }
+                }
+
+                return new GenerationHistoryManager($path, $enabled);
+            }
+        );
+
+        $this->app->singleton(
             GenerationPipeline::class,
             function ($app) {
                 $config = $app['config']->get('blueprintx');
@@ -335,20 +358,21 @@ class BlueprintXServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        $this->publishes([
-            __DIR__ . '/../resources/config/blueprintx.php' => config_path('blueprintx.php'),
-        ], 'blueprintx-config');
-
-        $this->publishes([
-            __DIR__ . '/../resources/templates' => resource_path('vendor/blueprintx/templates'),
-        ], 'blueprintx-templates');
-
         if ($this->app->runningInConsole()) {
-            $this->commands([
-                GenerateBlueprintsCommand::class,
-                ValidateBlueprintsCommand::class,
-                ListBlueprintsCommand::class,
-            ]);
+            $this->publishes([
+                __DIR__ . '/../resources/config/blueprintx.php' => config_path('blueprintx.php'),
+            ], 'blueprintx-config');
+
+            $this->publishes([
+                __DIR__ . '/../resources/templates' => resource_path('vendor/blueprintx/templates'),
+            ], 'blueprintx-templates');
         }
+
+        $this->commands([
+            GenerateBlueprintsCommand::class,
+            ValidateBlueprintsCommand::class,
+            ListBlueprintsCommand::class,
+            RollbackBlueprintsCommand::class,
+        ]);
     }
 }

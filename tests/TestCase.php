@@ -28,6 +28,14 @@ abstract class TestCase extends OrchestraTestCase
         $baseConfig['twig']['debug'] = true;
         $baseConfig['twig']['auto_reload'] = true;
 
+        $historyPath = $this->outputPath('history');
+        if (! is_dir($historyPath)) {
+            mkdir($historyPath, 0777, true);
+        }
+
+        $baseConfig['history']['enabled'] = true;
+        $baseConfig['history']['path'] = $historyPath;
+
     $app['config']->set('blueprintx', $baseConfig);
     $app['config']->set('app.key', 'base64:' . base64_encode(random_bytes(32)));
         $app['config']->set('app.debug', true);

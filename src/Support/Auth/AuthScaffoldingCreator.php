@@ -2,13 +2,20 @@
 
 namespace BlueprintX\Support\Auth;
 
+use BlueprintX\Blueprint\Blueprint;
+use BlueprintX\Kernel\Generation\PipelineResult;
+use BlueprintX\Kernel\History\GenerationHistoryManager;
 use BlueprintX\Kernel\TemplateEngine;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 class AuthScaffoldingCreator
 {
+    /** @var array<int, array<string, mixed>> */
+    private array $historyEntries = [];
+
     private const REGISTER_EXCLUDED_FIELDS = [
         'id',
         'created_at',
@@ -23,6 +30,7 @@ class AuthScaffoldingCreator
     public function __construct(
         private readonly Filesystem $files,
         private readonly TemplateEngine $templates,
+        private readonly GenerationHistoryManager $history,
     ) {
     }
 
@@ -31,6 +39,8 @@ class AuthScaffoldingCreator
      */
     public function ensure(array $options = []): void
     {
+        $this->historyEntries = [];
+
         $architecture = $this->normalizeArchitecture($options['architecture'] ?? null);
 
         $controllersPath = $this->normalizeRelativePath($options['controllers_path'] ?? 'app/Http/Controllers/Api');
@@ -55,11 +65,17 @@ class AuthScaffoldingCreator
         $this->ensureRegisterRequest($architecture, $requestsPath, $requestsNamespace, $model, $force, $dryRun);
         $this->ensureUserResource($architecture, $resourcesPath, $resourcesNamespace, $model, $force, $dryRun);
         $this->ensureApplicationUserModel($architecture, $model, $force, $dryRun);
-    $this->ensurePersonalAccessTokensMigration($model, $force, $dryRun);
+        $this->ensurePersonalAccessTokensMigration($model, $force, $dryRun);
         $this->ensureSanctumGuide($architecture, $sanctumInstalled, $force, $dryRun);
 
         if (! $dryRun) {
             $this->ensureRoutes($controllersNamespace);
+        }
+
+        if (! $dryRun) {
+            $this->persistHistory($architecture, $options);
+        } else {
+            $this->historyEntries = [];
         }
     }
 
@@ -91,7 +107,11 @@ class AuthScaffoldingCreator
             'user_resource_fqn' => $this->appendNamespace($resourcesNamespace, 'Crm\\UserResource'),
         ]);
 
-        $this->files->put($path, $contents);
+        $previous = $this->getExistingContents($path);
+
+        if ($this->files->put($path, $contents) !== false) {
+            $this->recordWrittenFile($path, $contents, $previous);
+        }
     }
 
     private function ensureLoginRequest(string $architecture, string $requestsPath, string $requestsNamespace, bool $force, bool $dryRun): void
@@ -112,7 +132,11 @@ class AuthScaffoldingCreator
             'namespace' => $this->appendNamespace($requestsNamespace, 'Auth'),
         ]);
 
-        $this->files->put($path, $contents);
+        $previous = $this->getExistingContents($path);
+
+        if ($this->files->put($path, $contents) !== false) {
+            $this->recordWrittenFile($path, $contents, $previous);
+        }
     }
 
     private function ensureRegisterRequest(string $architecture, string $requestsPath, string $requestsNamespace, ?array $model, bool $force, bool $dryRun): void
@@ -137,7 +161,11 @@ class AuthScaffoldingCreator
             'rules' => $rules,
         ]);
 
-        $this->files->put($path, $contents);
+        $previous = $this->getExistingContents($path);
+
+        if ($this->files->put($path, $contents) !== false) {
+            $this->recordWrittenFile($path, $contents, $previous);
+        }
     }
 
     private function ensureUserResource(string $architecture, string $resourcesPath, string $resourcesNamespace, ?array $model, bool $force, bool $dryRun): void
@@ -164,7 +192,11 @@ class AuthScaffoldingCreator
             'imports' => $resourceContext['imports'],
         ]);
 
-        $this->files->put($path, $contents);
+        $previous = $this->getExistingContents($path);
+
+        if ($this->files->put($path, $contents) !== false) {
+            $this->recordWrittenFile($path, $contents, $previous);
+        }
     }
 
     private function ensureRoutes(string $controllersNamespace): void
@@ -207,7 +239,9 @@ class AuthScaffoldingCreator
         $updated = $this->restoreLineEndings($original, $normalized);
 
         if ($updated !== $original) {
-            $this->files->put($path, $updated);
+            if ($this->files->put($path, $updated) !== false) {
+                $this->recordWrittenFile($path, $updated, $original);
+            }
         }
     }
 
@@ -730,15 +764,17 @@ class AuthScaffoldingCreator
 
         $contents = $this->renderTemplate($architecture, 'user-model.stub.twig', $context);
 
-        if ($this->files->exists($path) && ! $force) {
-            $existing = $this->files->get($path);
+        $previous = $this->getExistingContents($path);
 
-            if ($this->normalizePhpContents($existing) === $this->normalizePhpContents($contents)) {
+        if ($previous !== null && ! $force) {
+            if ($this->normalizePhpContents($previous) === $this->normalizePhpContents($contents)) {
                 return;
             }
         }
 
-        $this->files->put($path, $contents);
+        if ($this->files->put($path, $contents) !== false) {
+            $this->recordWrittenFile($path, $contents, $previous);
+        }
     }
 
     private function prepareApplicationUserModelContext(?array $model): ?array
@@ -819,7 +855,11 @@ class AuthScaffoldingCreator
 
         $contents = $this->renderTemplate($architecture, 'sanctum-guide.stub.twig', []);
 
-        $this->files->put($path, $contents);
+        $previous = $this->getExistingContents($path);
+
+        if ($this->files->put($path, $contents) !== false) {
+            $this->recordWrittenFile($path, $contents, $previous);
+        }
     }
 
     private function ensurePersonalAccessTokensMigration(?array $model, bool $force, bool $dryRun): void
@@ -859,7 +899,9 @@ class AuthScaffoldingCreator
                 continue;
             }
 
-            $this->files->put($path, $updated);
+            if ($this->files->put($path, $updated) !== false) {
+                $this->recordWrittenFile($path, $updated, $original);
+            }
         }
     }
 
@@ -968,6 +1010,138 @@ class AuthScaffoldingCreator
         }
 
         return $normalized;
+    }
+
+    private function getExistingContents(string $path): ?string
+    {
+        if (! $this->files->exists($path)) {
+            return null;
+        }
+
+        try {
+            return $this->files->get($path);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function recordWrittenFile(string $absolutePath, string $contents, ?string $previous): void
+    {
+        $entry = [
+            'layer' => 'auth_scaffolding',
+            'path' => $this->relativeToBasePath($absolutePath),
+            'full_path' => $this->normalizeAbsolutePath($absolutePath),
+            'status' => $previous === null ? 'written' : 'overwritten',
+            'bytes' => strlen($contents),
+            'checksum' => hash('sha256', $contents),
+        ];
+
+        if ($previous !== null) {
+            $entry['previous_contents'] = $previous;
+            $entry['previous_checksum'] = hash('sha256', $previous);
+            $entry['previous_bytes'] = strlen($previous);
+        }
+
+        $this->historyEntries[] = $entry;
+    }
+
+    private function relativeToBasePath(string $absolutePath): string
+    {
+        $base = str_replace('\\', '/', base_path());
+        $normalized = str_replace('\\', '/', $absolutePath);
+
+        if (! str_ends_with($base, '/')) {
+            $base .= '/';
+        }
+
+        if (str_starts_with($normalized, $base)) {
+            $relative = substr($normalized, strlen($base));
+        } else {
+            $relative = ltrim($normalized, '/');
+        }
+
+        return trim(str_replace('\\', '/', $relative), '/');
+    }
+
+    private function normalizeAbsolutePath(string $path): string
+    {
+        $resolved = realpath($path);
+
+        if ($resolved !== false) {
+            return $resolved;
+        }
+
+        return $this->normalizePathSeparators($path);
+    }
+
+    private function normalizePathSeparators(string $path): string
+    {
+        return str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+    }
+
+    private function makeVirtualBlueprint(string $architecture): Blueprint
+    {
+        $architecture = $architecture !== '' ? $architecture : 'hexagonal';
+
+        return Blueprint::fromArray([
+            'path' => 'blueprints/virtual/auth_scaffolding.yaml',
+            'module' => 'auth',
+            'entity' => 'auth_scaffolding',
+            'table' => 'users',
+            'architecture' => $architecture,
+            'fields' => [],
+            'relations' => [],
+            'options' => ['virtual' => true],
+            'api' => [
+                'base_path' => null,
+                'middleware' => [],
+                'resources' => ['includes' => []],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [
+                'origin' => 'auth_scaffolding',
+            ],
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function persistHistory(string $architecture, array $options): void
+    {
+        if ($this->historyEntries === []) {
+            return;
+        }
+
+        if (! $this->history->isEnabled()) {
+            $this->historyEntries = [];
+
+            return;
+        }
+
+        $result = new PipelineResult($this->historyEntries);
+        $blueprint = $this->makeVirtualBlueprint($architecture);
+
+        $contextOptions = [
+            'force' => (bool) ($options['force'] ?? false),
+        ];
+
+        if (array_key_exists('sanctum_installed', $options)) {
+            $contextOptions['sanctum_installed'] = (bool) $options['sanctum_installed'];
+        }
+
+        $context = [
+            'execution_id' => $options['execution_id'] ?? null,
+            'options' => $contextOptions,
+            'filters' => [],
+            'warnings' => [],
+        ];
+
+        $this->history->record($blueprint, 'virtual/auth_scaffolding.yaml', $result, $context);
+
+        $this->historyEntries = [];
     }
 
     private function resolveAbsolutePath(string $relative, string $append): string

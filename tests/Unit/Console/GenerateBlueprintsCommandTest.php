@@ -9,6 +9,8 @@ use BlueprintX\Contracts\BlueprintValidator;
 use BlueprintX\Kernel\BlueprintLocator;
 use BlueprintX\Kernel\Generation\PipelineResult;
 use BlueprintX\Kernel\GenerationPipeline;
+use BlueprintX\Kernel\History\GenerationHistoryManager;
+use BlueprintX\Support\Auth\AuthScaffoldingCreator;
 use BlueprintX\Validation\ValidationMessage;
 use BlueprintX\Validation\ValidationResult;
 use Illuminate\Console\Command;
@@ -179,7 +181,23 @@ class GenerateBlueprintsCommandTest extends TestCase
         mixed $pipeline,
         string $blueprintsPath
     ): CommandTester {
-    $command = new GenerateBlueprintsCommand($parser, $validator, $pipeline, new BlueprintLocator());
+        /** @var AuthScaffoldingCreator&MockObject $authScaffolding */
+        $authScaffolding = $this->getMockBuilder(AuthScaffoldingCreator::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['ensure'])
+            ->getMock();
+        $authScaffolding->expects($this->never())->method('ensure');
+
+        $history = new GenerationHistoryManager(null, false);
+
+        $command = new GenerateBlueprintsCommand(
+            $parser,
+            $validator,
+            $pipeline,
+            new BlueprintLocator(),
+            $authScaffolding,
+            $history
+        );
         $app = $this->makeContainer($blueprintsPath);
 
         $application = new Application();

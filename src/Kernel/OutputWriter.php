@@ -33,6 +33,8 @@ class OutputWriter
         $relativePath = ltrim($file->path, '\\/');
         $absolutePath = $this->basePath . DIRECTORY_SEPARATOR . $relativePath;
         $directory = dirname($absolutePath);
+        $bytes = strlen($file->contents);
+        $checksum = hash('sha256', $file->contents);
 
         if ($dryRun) {
             return [
@@ -40,6 +42,8 @@ class OutputWriter
                 'full_path' => $absolutePath,
                 'status' => 'preview',
                 'preview' => $file->contents,
+                'bytes' => $bytes,
+                'checksum' => $checksum,
             ];
         }
 
@@ -50,17 +54,31 @@ class OutputWriter
                     'full_path' => $absolutePath,
                     'status' => 'error',
                     'message' => sprintf('No se pudo crear el directorio "%s".', $directory),
+                    'bytes' => $bytes,
+                    'checksum' => $checksum,
                 ];
             }
         }
 
         $exists = is_file($absolutePath);
+        $previousContents = null;
+
+        if ($exists) {
+            $contents = file_get_contents($absolutePath);
+
+            if ($contents !== false) {
+                $previousContents = $contents;
+            }
+        }
+
         if ($exists && ! ($force || $file->overwrite)) {
             return [
                 'path' => $relativePath,
                 'full_path' => $absolutePath,
                 'status' => 'skipped',
                 'message' => 'El archivo ya existe. Usa --force para sobrescribir.',
+                'bytes' => $bytes,
+                'checksum' => $checksum,
             ];
         }
 
@@ -71,13 +89,25 @@ class OutputWriter
                 'full_path' => $absolutePath,
                 'status' => 'error',
                 'message' => 'No se pudo escribir el archivo.',
+                'bytes' => $bytes,
+                'checksum' => $checksum,
             ];
         }
 
-        return [
+        $result = [
             'path' => $relativePath,
             'full_path' => $absolutePath,
             'status' => $exists ? 'overwritten' : 'written',
+            'bytes' => $bytes,
+            'checksum' => $checksum,
         ];
+
+        if ($exists && is_string($previousContents)) {
+            $result['previous_contents'] = $previousContents;
+            $result['previous_checksum'] = hash('sha256', $previousContents);
+            $result['previous_bytes'] = strlen($previousContents);
+        }
+
+        return $result;
     }
 }

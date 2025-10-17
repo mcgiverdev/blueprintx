@@ -8,7 +8,19 @@ return [
         'api' => 'app/Http/Controllers/Api',
         'api_requests' => 'app/Http/Requests/Api',
         'api_resources' => 'app/Http/Resources',
-    'postman' => 'docs/postman',
+        'postman' => 'docs/postman',
+    ],
+
+    'history' => [
+        'enabled' => env('BLUEPRINTX_HISTORY_ENABLED', true),
+        'path' => env(
+            'BLUEPRINTX_HISTORY_PATH',
+            function_exists('storage_path')
+                ? storage_path('app/blueprintx/history')
+                : (function_exists('base_path')
+                    ? base_path('storage/blueprintx/history')
+                    : sys_get_temp_dir() . '/blueprintx-history')
+        ),
     ],
 
     'default_architecture' => 'hexagonal',

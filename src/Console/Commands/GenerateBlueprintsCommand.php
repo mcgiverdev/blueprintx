@@ -9,6 +9,7 @@ use BlueprintX\Contracts\BlueprintValidator;
 use BlueprintX\Exceptions\BlueprintParseException;
 use BlueprintX\Exceptions\BlueprintValidationException;
 use BlueprintX\Kernel\BlueprintLocator;
+use BlueprintX\Kernel\History\GenerationHistoryManager;
 use BlueprintX\Kernel\Generation\PipelineResult;
 use BlueprintX\Kernel\GenerationPipeline;
 use BlueprintX\Support\Auth\AuthScaffoldingCreator;
@@ -46,6 +47,7 @@ SIGNATURE;
         private readonly GenerationPipeline $pipeline,
         private readonly BlueprintLocator $locator,
         private readonly AuthScaffoldingCreator $authScaffolding,
+        private readonly GenerationHistoryManager $history,
     ) {
         parent::__construct();
     }
@@ -163,6 +165,7 @@ SIGNATURE;
             'warnings' => 0,
         ];
         $lastArchitecture = null;
+        $executionId = (string) Str::uuid();
 
     $queue = $this->prepareBlueprintQueue($blueprintPaths);
     $authModelBlueprint = $this->findAuthModelBlueprint($queue, $authModelEntity);
@@ -269,6 +272,29 @@ SIGNATURE;
                 continue;
             }
 
+            if (! $dryRun && $this->hasTrackableChanges($result)) {
+                $historyContext = [
+                    'options' => [
+                        'force' => $force,
+                        'only' => $only,
+                        'architecture_override' => $architectureOverride,
+                        'with_openapi' => $withOpenApi,
+                        'validate_openapi' => $validateOpenApi,
+                        'with_postman' => $withPostman,
+                    ],
+                    'filters' => [
+                        'module' => $module,
+                        'entity' => $entity,
+                    ],
+                    'warnings' => $result->warnings(),
+                    'execution_id' => $executionId,
+                ];
+
+                if ($this->history->record($blueprint, $relative, $result, $historyContext) === null) {
+                    $this->warn('  [historial] No se pudo registrar el historial de generación.');
+                }
+            }
+
             $hasErrors = $this->renderPipelineResult($result, $summary) || $hasErrors;
 
             $this->newLine();
@@ -291,6 +317,7 @@ SIGNATURE;
                 'force' => $forceAuth,
                 'dry_run' => $dryRun,
                 'sanctum_installed' => $sanctumInstalled,
+                'execution_id' => $executionId,
             ];
 
             if ($authModelData !== null) {
@@ -797,6 +824,19 @@ SIGNATURE;
         }
 
         return $hasErrors;
+    }
+
+    private function hasTrackableChanges(PipelineResult $result): bool
+    {
+        foreach ($result->files() as $file) {
+            $status = (string) ($file['status'] ?? '');
+
+            if ($status === 'written' || $status === 'overwritten') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function formatFileDetails(array $file): string
