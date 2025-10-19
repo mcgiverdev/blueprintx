@@ -125,6 +125,12 @@ class ApiLayerGenerator implements LayerGenerator
             }
         }
 
+        $routeFile = $this->updateRouteFile($blueprint, $context);
+
+        if ($routeFile !== null) {
+            $result->addFile($routeFile);
+        }
+
         return $result;
     }
 
@@ -1263,5 +1269,194 @@ class ApiLayerGenerator implements LayerGenerator
         }
 
         return $formatted;
+    }
+
+    private function updateRouteFile(Blueprint $blueprint, array $context): ?GeneratedFile
+    {
+        if (! function_exists('base_path')) {
+            return null;
+        }
+
+        $routesPath = base_path('routes/api.php');
+
+        if (! is_string($routesPath) || ! is_file($routesPath)) {
+            return null;
+        }
+
+        $original = @file_get_contents($routesPath);
+
+        if ($original === false) {
+            return null;
+        }
+
+        $normalized = str_replace(["\r\n", "\r"], "\n", $original);
+
+        $controllerNamespace = trim($context['namespaces']['api_root'] ?? '', '\\');
+        $controllerBase = $context['naming']['entity_studly'] ?? null;
+
+        if (! is_string($controllerBase) || $controllerBase === '') {
+            return null;
+        }
+
+        $controllerShort = $controllerBase . 'Controller';
+        $controllerFqcn = $controllerNamespace !== '' ? $controllerNamespace . '\\' . $controllerShort : $controllerShort;
+
+        $useStatement = sprintf('use %s;', $controllerFqcn);
+
+        if (! str_contains($normalized, $useStatement)) {
+            $normalized = $this->insertUseStatement($normalized, $useStatement);
+        }
+
+        $resourcePath = $context['routes']['resource'] ?? null;
+
+        if (! is_string($resourcePath) || $resourcePath === '') {
+            $resourcePath = $this->resolveResourceRoute($blueprint);
+        }
+
+        $routeUri = ltrim((string) $resourcePath, '/');
+
+        if ($routeUri === '') {
+            return null;
+        }
+
+        $middleware = $this->sanitizeMiddleware($blueprint->apiMiddleware());
+
+        if ($this->routeAlreadyRegistered($normalized, $controllerShort, $routeUri)) {
+            $updated = $this->restoreLineEndings($original, $normalized);
+
+            if ($updated === $original) {
+                return null;
+            }
+
+            return new GeneratedFile('routes/api.php', $updated, true);
+        }
+
+        $routeBlock = $this->buildRouteBlock($routeUri, $controllerShort, $middleware);
+
+        $normalized = rtrim($normalized, "\n") . "\n\n" . $routeBlock . "\n";
+
+        $updated = $this->restoreLineEndings($original, $normalized);
+
+        if ($updated === $original) {
+            return null;
+        }
+
+        return new GeneratedFile('routes/api.php', $updated, true);
+    }
+
+    /**
+     * @param array<int, mixed> $middleware
+     * @return array<int, string>
+     */
+    private function sanitizeMiddleware(array $middleware): array
+    {
+        $normalized = [];
+
+        foreach ($middleware as $entry) {
+            if (! is_string($entry)) {
+                continue;
+            }
+
+            $value = trim($entry);
+
+            if ($value === '') {
+                continue;
+            }
+
+            if (! in_array($value, $normalized, true)) {
+                $normalized[] = $value;
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<int, string> $middleware
+     */
+    private function buildRouteBlock(string $routeUri, string $controllerShort, array $middleware): string
+    {
+        $routeLine = sprintf("Route::apiResource('%s', %s::class);", $routeUri, $controllerShort);
+
+        if ($middleware === []) {
+            return $routeLine;
+        }
+
+        $middlewareLiteral = $this->formatMiddlewareArray($middleware);
+
+        return sprintf(
+            "Route::middleware(%s)->group(function (): void {\n    %s\n});",
+            $middlewareLiteral,
+            $routeLine
+        );
+    }
+
+    /**
+     * @param array<int, string> $middleware
+     */
+    private function formatMiddlewareArray(array $middleware): string
+    {
+        $items = array_map(
+            static fn (string $item): string => "'" . str_replace("'", "\\'", $item) . "'",
+            $middleware
+        );
+
+        return '[' . implode(', ', $items) . ']';
+    }
+
+    private function routeAlreadyRegistered(string $contents, string $controllerShort, string $routeUri): bool
+    {
+        $controllerPattern = preg_quote($controllerShort, '/');
+        $uriPattern = preg_quote($routeUri, '/');
+
+        $patterns = [
+            sprintf("/Route::[^\n;]*apiResource\\(['\"]%s['\"],\s*%s::class/", $uriPattern, $controllerPattern),
+            sprintf("/Route::[^\n;]*apiResource\\(['\"]\\/%s['\"],\s*%s::class/", $uriPattern, $controllerPattern),
+            sprintf("/apiResource\\([^;]*%s::class/", $controllerPattern),
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $contents)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function insertUseStatement(string $normalized, string $statement): string
+    {
+        $lastUsePos = strrpos($normalized, "\nuse ");
+
+        if ($lastUsePos === false) {
+            $openingTagPos = strpos($normalized, "<?php\n");
+
+            if ($openingTagPos === false) {
+                return $statement . "\n\n" . ltrim($normalized);
+            }
+
+            $offset = $openingTagPos + 6;
+
+            return substr($normalized, 0, $offset) . $statement . "\n" . substr($normalized, $offset);
+        }
+
+        $semicolonPos = strpos($normalized, ';', $lastUsePos);
+
+        if ($semicolonPos === false) {
+            return $normalized . "\n" . $statement;
+        }
+
+        $semicolonPos++;
+
+        return substr($normalized, 0, $semicolonPos) . "\n" . $statement . substr($normalized, $semicolonPos);
+    }
+
+    private function restoreLineEndings(string $original, string $normalized): string
+    {
+        if (str_contains($original, "\r\n")) {
+            return str_replace("\n", "\r\n", $normalized);
+        }
+
+        return $normalized;
     }
 }
