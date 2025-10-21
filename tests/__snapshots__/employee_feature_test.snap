@@ -11,6 +11,16 @@ class EmployeeFeatureTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->withoutMiddleware([
+            \Illuminate\Auth\Middleware\Authenticate::class,
+            'role',
+        ]);
+    }
+
     public function test_index_returns_paginated_list(): void
     {
         $department = Department::factory()->create();
@@ -87,8 +97,8 @@ class EmployeeFeatureTest extends TestCase
         ];
 
         $response = $this->putJson('/api/hr/employees/' . $employee->id, $payload, [
-            'If-Match' => '*',
-        ]);
+        'If-Match' => '*',
+    ]);
 
         $response->assertOk();
         $response->assertJsonFragment([

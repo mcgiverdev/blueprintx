@@ -7,10 +7,108 @@ use BlueprintX\Contracts\ArchitectureDriver;
 use BlueprintX\Generators\ApiLayerGenerator;
 use BlueprintX\Kernel\Drivers\HexagonalDriver;
 use BlueprintX\Kernel\TemplateEngine;
+use Illuminate\Container\Container;
 use PHPUnit\Framework\TestCase;
 
 class ApiLayerGeneratorTest extends TestCase
 {
+    private ?Container $previousContainer = null;
+
+    private ?string $tempBasePath = null;
+
+    private ?string $routesPath = null;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->previousContainer = Container::getInstance();
+
+        $this->tempBasePath = rtrim(sys_get_temp_dir(), '\\/') . DIRECTORY_SEPARATOR . 'blueprintx_api_' . bin2hex(random_bytes(6));
+        $routesDirectory = $this->tempBasePath . DIRECTORY_SEPARATOR . 'routes';
+        $this->routesPath = $routesDirectory . DIRECTORY_SEPARATOR . 'api.php';
+
+        if (! is_dir($routesDirectory)) {
+            mkdir($routesDirectory, 0777, true);
+        }
+
+        file_put_contents(
+            $this->routesPath,
+            <<<'PHP'
+<?php
+
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('api')->group(function (): void {
+});
+
+PHP
+        );
+
+        $app = new class($this->tempBasePath) extends Container {
+            public function __construct(private readonly string $basePath)
+            {
+            }
+
+            public function basePath($path = ''): string
+            {
+                return $this->join($this->basePath, $path);
+            }
+
+            public function runningUnitTests(): bool
+            {
+                return true;
+            }
+
+            public function environment(...$environments): mixed
+            {
+                if ($environments === []) {
+                    return 'testing';
+                }
+
+                foreach ($environments as $environment) {
+                    if ($environment === 'testing') {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            public function storagePath($path = ''): string
+            {
+                return $this->join($this->basePath, 'storage' . ($path !== '' ? DIRECTORY_SEPARATOR . ltrim((string) $path, '\\/') : ''));
+            }
+
+            private function join(string $base, string $path): string
+            {
+                $base = rtrim($base, '\\/');
+                $append = ltrim((string) $path, '\\/');
+
+                return $append === '' ? $base : $base . DIRECTORY_SEPARATOR . $append;
+            }
+        };
+
+        Container::setInstance($app);
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->previousContainer instanceof Container || $this->previousContainer === null) {
+            Container::setInstance($this->previousContainer);
+        }
+
+        if (is_string($this->tempBasePath) && is_dir($this->tempBasePath)) {
+            $this->deleteDirectory($this->tempBasePath);
+        }
+
+        $this->routesPath = null;
+        $this->tempBasePath = null;
+        $this->previousContainer = null;
+
+        parent::tearDown();
+    }
+
     public function test_it_generates_controller_file(): void
     {
         $engine = $this->makeTemplateEngine();
@@ -23,13 +121,14 @@ class ApiLayerGeneratorTest extends TestCase
         $result = $generator->generate($blueprint, $driver);
 
         $files = $result->files();
-        $this->assertCount(3, $files);
+        $this->assertCount(4, $files);
 
         $paths = array_map(static fn ($file): string => $file->path, $files);
 
         $this->assertContains('app/Http/Controllers/Api/UserController.php', $paths);
         $this->assertContains('app/Http/Resources/UserResource.php', $paths);
         $this->assertContains('app/Http/Resources/UserCollection.php', $paths);
+        $this->assertContains('routes/api.php', $paths);
 
         $controller = $this->findFileByPath($files, 'app/Http/Controllers/Api/UserController.php');
         $this->assertNotNull($controller);
@@ -37,11 +136,11 @@ class ApiLayerGeneratorTest extends TestCase
         $this->assertStringContainsString('class UserController', $controller->contents);
         $this->assertStringContainsString('UserCollection', $controller->contents);
         $this->assertStringContainsString('UserResource', $controller->contents);
-    $this->assertStringContainsString('HandlesOptimisticLocking', $controller->contents);
-    $this->assertStringContainsString('protected array $optimisticLocking = [', $controller->contents);
-    $this->assertStringContainsString('$this->respondWithResourceVersion($response, $resource);', $controller->contents);
-    $this->assertStringContainsString('$this->ensureCurrentVersion($request, $resource);', $controller->contents);
-    $this->assertStringContainsString('function destroy(int $id, Request $request,', $controller->contents);
+        $this->assertStringContainsString('HandlesOptimisticLocking', $controller->contents);
+        $this->assertStringContainsString('protected array $optimisticLocking = [', $controller->contents);
+        $this->assertStringContainsString('$this->respondWithResourceVersion($response, $resource);', $controller->contents);
+        $this->assertStringContainsString('$this->ensureCurrentVersion($request, $resource);', $controller->contents);
+        $this->assertStringContainsString('function destroy(int $id, Request $request,', $controller->contents);
 
         $resource = $this->findFileByPath($files, 'app/Http/Resources/UserResource.php');
         $this->assertNotNull($resource);
@@ -49,8 +148,12 @@ class ApiLayerGeneratorTest extends TestCase
 
         $collection = $this->findFileByPath($files, 'app/Http/Resources/UserCollection.php');
         $this->assertNotNull($collection);
-        $this->assertStringContainsString('class UserCollection extends ResourceCollection', $collection->contents);
-    $this->assertStringContainsString('public $collects = UserResource::class;', $collection->contents);
+            $this->assertStringContainsString('class UserCollection extends ResourceCollection', $collection->contents);
+            $this->assertStringContainsString('public $collects = UserResource::class;', $collection->contents);
+
+        $routeFile = $this->findFileByPath($files, 'routes/api.php');
+            $this->assertNotNull($routeFile);
+            $this->assertStringContainsString("Route::apiResource('api'", $routeFile->contents);
 
         $this->assertCount(0, $result->warnings());
     }
@@ -89,12 +192,13 @@ class ApiLayerGeneratorTest extends TestCase
 
         $result = $generator->generate($blueprint, $driver);
 
-        $files = $result->files();
-        $this->assertCount(3, $files);
+    $files = $result->files();
+    $this->assertCount(4, $files);
 
         $controller = $this->findFileByPath($files, 'app/Http/Controllers/Api/InvoiceController.php');
         $this->assertNotNull($controller);
         $this->assertStringContainsString('InvoiceController', $controller->contents);
+        $this->assertNotNull($this->findFileByPath($files, 'routes/api.php'));
         $this->assertCount(0, $result->warnings());
     }
 
@@ -126,7 +230,12 @@ class ApiLayerGeneratorTest extends TestCase
         $collection = $this->findFileByPath($files, 'app/Http/Resources/Sales/OrderCollection.php');
         $this->assertNotNull($collection);
         $this->assertStringContainsString('OrderCollection extends ResourceCollection', $collection->contents);
-    $this->assertStringContainsString('public $collects = OrderResource::class;', $collection->contents);
+        $this->assertStringContainsString('public $collects = OrderResource::class;', $collection->contents);
+
+        $routeFile = $this->findFileByPath($files, 'routes/api.php');
+        $this->assertNotNull($routeFile);
+        $this->assertStringContainsString('use App\\Modules\\Sales\\OrderController;', $routeFile->contents);
+        $this->assertStringContainsString("Route::apiResource('sales/orders'", $routeFile->contents);
     }
 
     public function test_it_generates_form_requests_when_enabled(): void
@@ -145,8 +254,8 @@ class ApiLayerGeneratorTest extends TestCase
 
         $result = $generator->generate($blueprint, $driver);
 
-        $files = $result->files();
-        $this->assertCount(5, $files);
+    $files = $result->files();
+    $this->assertCount(6, $files);
 
         $paths = array_map(static fn ($file): string => $file->path, $files);
 
@@ -155,6 +264,7 @@ class ApiLayerGeneratorTest extends TestCase
         $this->assertContains('app/Http/Resources/Hr/EmployeeCollection.php', $paths);
         $this->assertContains('app/Http/Requests/Api/Hr/StoreEmployeeRequest.php', $paths);
         $this->assertContains('app/Http/Requests/Api/Hr/UpdateEmployeeRequest.php', $paths);
+    $this->assertContains('routes/api.php', $paths);
 
         $controller = $this->findFileByPath($files, 'app/Http/Controllers/Api/Hr/EmployeeController.php');
         $this->assertNotNull($controller);
@@ -172,7 +282,7 @@ class ApiLayerGeneratorTest extends TestCase
         $collection = $this->findFileByPath($files, 'app/Http/Resources/Hr/EmployeeCollection.php');
         $this->assertNotNull($collection);
         $this->assertStringContainsString('class EmployeeCollection extends ResourceCollection', $collection->contents);
-    $this->assertStringContainsString('public $collects = EmployeeResource::class;', $collection->contents);
+        $this->assertStringContainsString('public $collects = EmployeeResource::class;', $collection->contents);
 
         $storeRequest = $this->findFileByPath($files, 'app/Http/Requests/Api/Hr/StoreEmployeeRequest.php');
         $this->assertNotNull($storeRequest);
@@ -183,6 +293,10 @@ class ApiLayerGeneratorTest extends TestCase
         $this->assertNotNull($updateRequest);
         $this->assertStringContainsString('class UpdateEmployeeRequest extends FormRequest', $updateRequest->contents);
         $this->assertStringContainsString("'sometimes'", $updateRequest->contents);
+
+        $routeFile = $this->findFileByPath($files, 'routes/api.php');
+        $this->assertNotNull($routeFile);
+        $this->assertStringContainsString("Route::apiResource('hr/employees'", $routeFile->contents);
     }
 
     public function test_it_embeds_configured_relations(): void
@@ -231,8 +345,8 @@ class ApiLayerGeneratorTest extends TestCase
         $controller = $this->findFileByPath($result->files(), 'app/Http/Controllers/Api/Hr/EmployeeController.php');
         $this->assertNotNull($controller);
         $this->assertStringContainsString("'with' => ['department', 'projects']", $controller->contents);
-    $this->assertStringContainsString("\$resource->load(['department', 'projects']);", $controller->contents);
-    $this->assertStringContainsString("\$updated->load(['department', 'projects']);", $controller->contents);
+    $this->assertStringContainsString('$resource->load([\'department\', \'projects\']);', $controller->contents);
+    $this->assertStringContainsString('$updated->load([\'department\', \'projects\']);', $controller->contents);
 
         $resource = $this->findFileByPath($result->files(), 'app/Http/Resources/Hr/EmployeeResource.php');
         $this->assertNotNull($resource);
@@ -314,6 +428,24 @@ class ApiLayerGeneratorTest extends TestCase
         }
 
         return null;
+    }
+
+    private function deleteDirectory(string $directory): void
+    {
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+
+        foreach ($iterator as $item) {
+            if ($item->isDir()) {
+                @rmdir($item->getPathname());
+            } else {
+                @unlink($item->getPathname());
+            }
+        }
+
+        @rmdir($directory);
     }
 
     private function makeBlueprint(string $entity, ?string $module = null, ?string $apiBasePath = '/api', array $options = []): Blueprint

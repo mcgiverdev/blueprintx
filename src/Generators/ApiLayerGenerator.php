@@ -1273,13 +1273,9 @@ class ApiLayerGenerator implements LayerGenerator
 
     private function updateRouteFile(Blueprint $blueprint, array $context): ?GeneratedFile
     {
-        if (! function_exists('base_path')) {
-            return null;
-        }
+        $routesPath = $this->resolveRoutesFilePath();
 
-        $routesPath = base_path('routes/api.php');
-
-        if (! is_string($routesPath) || ! is_file($routesPath)) {
+        if ($routesPath === null || ! is_file($routesPath)) {
             return null;
         }
 
@@ -1354,6 +1350,39 @@ class ApiLayerGenerator implements LayerGenerator
         }
 
         return new GeneratedFile('routes/api.php', $updated, true);
+    }
+
+    private function resolveRoutesFilePath(): ?string
+    {
+        $routesRelative = 'routes' . DIRECTORY_SEPARATOR . 'api.php';
+
+        if (function_exists('app')) {
+            $application = app();
+
+            if (is_object($application) && method_exists($application, 'basePath')) {
+                try {
+                    $resolved = $application->basePath($routesRelative);
+
+                    if (is_string($resolved) && $resolved !== '') {
+                        return $resolved;
+                    }
+                } catch (\Throwable) {
+                    return null;
+                }
+            }
+        }
+
+        if (function_exists('base_path')) {
+            try {
+                $resolved = base_path($routesRelative);
+
+                return is_string($resolved) && $resolved !== '' ? $resolved : null;
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     /**

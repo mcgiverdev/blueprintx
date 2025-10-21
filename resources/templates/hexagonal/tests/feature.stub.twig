@@ -45,9 +45,9 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 
         $this->assertSame({{ tests.index_count }}, $response->json('meta.total'));
 {% for include in tests.includes %}
-    $this->assertNotNull($response->json('{{ include.index_path }}'));
+        $this->assertNotNull($response->json('{{ include.index_path }}'));
 {% if include.relation %}
-    $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.index_path }}'));
+        $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.index_path }}'));
 {% endif %}
 {% endfor %}
     }
@@ -70,12 +70,12 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% endfor %}        ]);
 {% endif %}
 {% if optimistic_locking.enabled %}
-    $response->assertHeader('{{ optimistic_locking.response_header }}');
+        $response->assertHeader('{{ optimistic_locking.response_header }}');
 {% endif %}
 {% for include in tests.includes %}
-    $this->assertNotNull($response->json('{{ include.store_path }}'));
+        $this->assertNotNull($response->json('{{ include.store_path }}'));
 {% if include.relation %}
-    $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.store_path }}'));
+        $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.store_path }}'));
 {% endif %}
 {% endfor %}
 
@@ -112,12 +112,12 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% endfor %}        ]);
 {% endif %}
 {% if optimistic_locking.enabled %}
-    $response->assertHeader('{{ optimistic_locking.response_header }}');
+        $response->assertHeader('{{ optimistic_locking.response_header }}');
 {% endif %}
 {% for include in tests.includes %}
-    $this->assertNotNull($response->json('{{ include.store_path }}'));
+        $this->assertNotNull($response->json('{{ include.store_path }}'));
 {% if include.relation %}
-    $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.store_path }}'));
+        $this->assertSame(${{ include.relation.variable }}->id, $response->json('{{ include.store_path }}'));
 {% endif %}
 {% endfor %}
 
@@ -151,13 +151,3 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
         ]);
     }
 }
-
-
-
-
-
-
-
-
-
-

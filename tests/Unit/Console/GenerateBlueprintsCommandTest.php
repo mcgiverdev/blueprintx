@@ -29,11 +29,19 @@ class GenerateBlueprintsCommandTest extends TestCase
     /** @var array<int, string> */
     private array $tempDirectories = [];
 
+    private ?Container $previousContainer = null;
+
     protected function tearDown(): void
     {
         foreach ($this->tempDirectories as $directory) {
             $this->deleteDirectory($directory);
         }
+
+        if ($this->previousContainer instanceof Container || $this->previousContainer === null) {
+            Container::setInstance($this->previousContainer);
+        }
+
+        $this->previousContainer = null;
 
         parent::tearDown();
     }
@@ -145,7 +153,7 @@ class GenerateBlueprintsCommandTest extends TestCase
         $display = $tester->getDisplay();
 
         $this->assertStringContainsString('[validator.failed]', $display);
-        $this->assertStringContainsString('La validación produjo errores', $display);
+    $this->assertStringContainsString('La validacion produjo errores', $display);
     }
 
     public function test_it_warns_when_no_blueprints_found(): void
@@ -179,14 +187,15 @@ class GenerateBlueprintsCommandTest extends TestCase
         mixed $parser,
         mixed $validator,
         mixed $pipeline,
-        string $blueprintsPath
+        string $blueprintsPath,
+        bool $expectsAuthScaffolding = false
     ): CommandTester {
         /** @var AuthScaffoldingCreator&MockObject $authScaffolding */
         $authScaffolding = $this->getMockBuilder(AuthScaffoldingCreator::class)
             ->disableOriginalConstructor()
             ->onlyMethods(['ensure'])
             ->getMock();
-        $authScaffolding->expects($this->never())->method('ensure');
+    $authScaffolding->expects($expectsAuthScaffolding ? $this->once() : $this->never())->method('ensure');
 
         $history = new GenerationHistoryManager(null, false);
 
@@ -210,7 +219,49 @@ class GenerateBlueprintsCommandTest extends TestCase
 
     private function makeContainer(string $blueprintsPath): Container
     {
-        $app = new Container();
+        $app = new class($blueprintsPath) extends Container {
+            public function __construct(private readonly string $workingPath)
+            {
+            }
+
+            public function basePath($path = ''): string
+            {
+                return $this->joinPaths($this->workingPath, $path);
+            }
+
+            public function environment(...$environments): mixed
+            {
+                if ($environments === []) {
+                    return 'testing';
+                }
+
+                foreach ($environments as $environment) {
+                    if ($environment === 'testing') {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            public function runningUnitTests(): bool
+            {
+                return true;
+            }
+
+            public function storagePath($path = ''): string
+            {
+                return $this->joinPaths($this->workingPath, 'storage' . ($path !== '' ? DIRECTORY_SEPARATOR . ltrim((string) $path, '\\/') : ''));
+            }
+
+            private function joinPaths(string $base, string $append): string
+            {
+                $base = rtrim($base, '\\/');
+                $append = ltrim((string) $append, '\\/');
+
+                return $append === '' ? $base : $base . DIRECTORY_SEPARATOR . $append;
+            }
+        };
 
         $config = [
             'blueprintx' => [
@@ -239,7 +290,18 @@ class GenerateBlueprintsCommandTest extends TestCase
             {
                 return $this->items[$key] ?? $default;
             }
+
+            public function has(string $key): bool
+            {
+                return array_key_exists($key, $this->items);
+            }
         });
+
+        if ($this->previousContainer === null) {
+            $this->previousContainer = Container::getInstance();
+        }
+
+        Container::setInstance($app);
 
         return $app;
     }

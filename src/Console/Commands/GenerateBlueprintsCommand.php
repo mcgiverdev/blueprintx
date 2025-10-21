@@ -300,7 +300,7 @@ SIGNATURE;
             $this->newLine();
         }
 
-        if (! $dryRun) {
+        if (! $dryRun && ! $hasErrors) {
             $authModelData = $authModelBlueprint instanceof Blueprint ? $authModelBlueprint->toArray() : null;
             $scaffoldingArchitecture = $architectureOverride !== null
                 ? $this->normalizeArchitecture($architectureOverride, $defaultArchitecture)

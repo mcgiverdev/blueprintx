@@ -113,8 +113,8 @@ class DatabaseLayerGeneratorTest extends TestCase
         $this->assertStringContainsString("\$table->foreignId('category_id')->constrained('categories')->cascadeOnDelete();", $migration->contents);
         $this->assertStringContainsString('$table->softDeletes();', $migration->contents);
 
-        $this->assertStringContainsString('class ProductFactory extends Factory', $factory->contents);
-        $this->assertStringContainsString("'name' => fake()->words(3, true)", $factory->contents);
+    $this->assertStringContainsString('class ProductFactory extends Factory', $factory->contents);
+    $this->assertStringContainsString("'name' => fake()->unique()->words(3, true)", $factory->contents);
         $this->assertStringContainsString("'category_id' => Category::factory()", $factory->contents);
     }
 

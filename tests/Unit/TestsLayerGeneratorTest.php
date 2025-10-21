@@ -21,7 +21,7 @@ class TestsLayerGeneratorTest extends TestCase
         $driver = $this->makeHexagonalDriver();
         $this->registerDriverNamespaces($engine, $driver);
 
-    $generator = $this->makeTestsGenerator($engine);
+        $generator = $this->makeTestsGenerator($engine);
         $blueprint = $this->makeBlueprint('User');
 
         $result = $generator->generate($blueprint, $driver);
@@ -40,15 +40,15 @@ class TestsLayerGeneratorTest extends TestCase
         $driver = $this->makeHexagonalDriver();
         $this->registerDriverNamespaces($engine, $driver);
 
-    $generator = $this->makeTestsGenerator($engine);
+        $generator = $this->makeTestsGenerator($engine);
         $blueprint = BlueprintFactory::employee();
 
-    $result = $generator->generate($blueprint, $driver);
-    $file = $result->files()[0];
+        $result = $generator->generate($blueprint, $driver);
+        $file = $result->files()[0];
 
-    $expected = $this->snapshot('employee_feature_test.snap');
+        $expected = $this->snapshot('employee_feature_test.snap');
 
-    $this->assertSame($expected, $this->normalizeNewLines($file->contents));
+        $this->assertSame($expected, $this->normalizeNewLines($file->contents));
     }
 
     public function test_it_respects_module_overrides(): void
@@ -57,7 +57,7 @@ class TestsLayerGeneratorTest extends TestCase
         $driver = $this->makeHexagonalDriver();
         $this->registerDriverNamespaces($engine, $driver);
 
-    $generator = $this->makeTestsGenerator($engine);
+        $generator = $this->makeTestsGenerator($engine);
         $blueprint = $this->makeBlueprint('Order', 'sales');
 
         $options = [
@@ -97,7 +97,7 @@ class TestsLayerGeneratorTest extends TestCase
             }
         };
 
-    $generator = $this->makeTestsGenerator($engine);
+        $generator = $this->makeTestsGenerator($engine);
         $result = $generator->generate($this->makeBlueprint('User'), $driver);
 
         $this->assertCount(0, $result->files());

@@ -4,6 +4,16 @@ title: Historial de versiones
 nav_order: 99
 ---
 
+## 1.2.0 · 2025-10-21
+
+- Implementa un historial persistente de generación mediante `GenerationHistoryManager`, configurable vía `blueprintx.history.enabled` y `blueprintx.history.path`, con respaldo automático de hashes, tamaños y contenidos anteriores.
+- Añade el comando `php artisan blueprintx:rollback` para revertir corridas completas por ID de ejecución o corrida, con opciones `--dry-run` y `--force` y una vista previa detallada de acciones.
+- `php artisan blueprintx:generate` ahora registra cada archivo escrito o sobrescrito, reutiliza el ID de ejecución en el scaffolding de autenticación y publica advertencias cuando el historial no puede almacenarse.
+- El generador API actualiza `routes/api.php` insertando `use` y rutas `Route::apiResource` sin duplicados, normaliza URIs al cambiar el blueprint y respeta `api.middleware`.
+- El parser YAML acepta `api.base_path` o `api.basePath` y el generador de base de datos reconoce el tipo `id`, genera `$table->id()` y restablece seeders por módulo para mantener el historial limpio.
+- El `OutputWriter` conserva checksums y copias anteriores para permitir restauraciones, mientras que la infraestructura evita reescrituras cuando un archivo no cambia byte a byte.
+- Se documenta la hoja de ruta de la UI en `docs/ui-development-roadmap.md` para coordinar el desarrollo backend/frontend.
+
 ## 1.1.1 · 2025-10-12
 
 - Añade una guía detallada para instalar Laravel Sanctum, requisito fundamental para habilitar la autenticación en el scaffolding generado.
