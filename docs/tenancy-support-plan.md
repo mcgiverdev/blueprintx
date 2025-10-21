@@ -115,8 +115,79 @@ Estado general: **Pendiente**
 
 ### Historias de usuario preliminares
 
-- **Como desarrollador de dominio**, quiero que las entidades generadas incluyan automáticamente el campo `tenant_id` y scopes globales cuando el blueprint sea multi-tenant para evitar olvidos.
-- **Como desarrollador de aplicación**, necesito que los comandos/queries reciban el tenant actual o lo resuelvan vía contexto para mantener la lógica de negocio aislada.
-- **Como desarrollador de infraestructura**, deseo que los repositorios aplican filtros tenant-aware y generen migraciones con llaves foráneas a `tenants`.
-- **Como desarrollador de API**, quiero que los controladores y recursos verifiquen el tenant y respondan con datos aislados, incluyendo headers requeridos por `stancl/tenancy`.
-- **Como QA**, necesito pruebas y snapshots que cubran escenarios central y tenant para garantizar que los cambios no mezclan datos.
+
+#### Historias de usuario por capa
+
+##### Dominio
+
+###### Historia (Dominio)
+
+Como desarrollador, quiero que las entidades y agregados creados en modo `tenant` incluyan la columna `tenant_id`, scopes `forTenant()` y validaciones de unicidad filtradas por tenant.
+
+###### Criterios de aceptación (Dominio)
+
+| Criterio | Resultado esperado |
+| --- | --- |
+| Columnas tenant-aware | Las plantillas de entidad generan `tenant_id` como `Uuid` o `foreignUuid` según configuración del proyecto. |
+| Scope reutilizable | Se incluye un scope global o trait `TenantAwareEntity` que aplica automáticamente `tenant_id` en las consultas. |
+| Validaciones específicas | Las pruebas generadas para entidades incluyen un caso de validación que falla cuando falta `tenant_id`. |
+
+##### Aplicación
+
+###### Historia (Aplicación)
+
+Como desarrollador de aplicación, necesito que comandos, queries y handlers reciban el tenant activo desde el contexto para evitar pasar IDs manualmente.
+
+###### Criterios de aceptación (Aplicación)
+
+| Criterio | Resultado esperado |
+| --- | --- |
+| Entrada obligatoria | Los comandos generados aceptan un `TenantContext` o valor `tenantId` obligatorio cuando el blueprint está en modo `tenant`. |
+| Resolución centralizada | Los handlers incluyen un helper `resolveTenant()` que utiliza el driver configurado (`stancl` por defecto). |
+| Filtros automáticos | Los filtros `QueryFilter` aplican el tenant actual sin que el desarrollador modifique cada módulo. |
+
+##### Infraestructura
+
+###### Historia (Infraestructura)
+
+Como desarrollador de infraestructura, quiero que repositorios, migraciones y factories sean conscientes del tenant para no filtrar datos manualmente.
+
+###### Criterios de aceptación (Infraestructura)
+
+| Criterio | Resultado esperado |
+| --- | --- |
+| Migraciones | Las migraciones generadas crean llaves foráneas `tenant_id` y añaden índices compuestos con las columnas críticas. |
+| Repositorios | Los repositorios incluyen un método `scopeTenant()` reutilizable y lo aplican en operaciones estándar (`find`, `paginate`). |
+| Factories | Las factories de prueba aceptan un `tenant_id` opcional y crean uno nuevo cuando no se proporcione. |
+
+##### API
+
+###### Historia (API)
+
+Como desarrollador de API, necesito que controladores y recursos respeten el contexto tenant y expongan los headers esperados.
+
+###### Criterios de aceptación (API)
+
+| Criterio | Resultado esperado |
+| --- | --- |
+| Middleware | Los controladores tenant-aware usan el middleware configurado (`tenancy` por defecto) y validan el header `X-Tenant`. |
+| Validación | Los Form Requests añaden reglas `exists:tenants,id` para el campo `tenant_id` cuando corresponda. |
+| Respuesta | Los recursos JSON incluyen `tenant_id` solo en respuestas internas y lo omiten en modos `central`. |
+
+##### Tests
+
+###### Historia (Tests)
+
+Como QA, quiero que las pruebas generadas cubran ambos contextos para prevenir regresiones entre modos `central` y `tenant`.
+
+###### Criterios de aceptación (Tests)
+
+| Criterio | Resultado esperado |
+| --- | --- |
+| Escenarios | Los feature tests generan escenarios duplicados (`withoutTenancy`, `withTenancy`). |
+| Helpers | Se incluyen helpers para crear tenants en `setUp()` y limpiar aislamiento entre pruebas. |
+| Snapshots | Las snapshots diferencian los sufijos `Central` y `Tenant` para facilitar el mantenimiento. |
+
+1. ☑ Completado - 2025-10-21: Documentar decisiones de convención vs bandera en la guía (`docs/guides/workflow.md#6-convenciones-de-tenancy`).
+2. ☑ Completado - 2025-10-21: Detallar el mecanismo de integración base con `stancl/tenancy` (secciones de detección, configuración, stubs y hooks).
+3. ☑ Completado - 2025-10-21: Preparar historias de usuario para cada capa (`Historias de usuario por capa`).
