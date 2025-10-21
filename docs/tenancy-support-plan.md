@@ -45,6 +45,7 @@ Estado general: **Pendiente**
 - La tabla `tenants` (o equivalente) existe en las implementaciones y provee una llave foránea estándar (`tenant_id`).
 - El modo tenancy debe ser configurable por blueprint individual, permitiendo combinaciones central/tenant/shared dentro del mismo módulo.
 - Se mantendrá compatibilidad retroactiva: los blueprints existentes sin flag explícito continuarán funcionando como `central`.
+- BlueprintX ofrecerá integración de referencia con `stancl/tenancy` (detectada automáticamente o habilitada vía configuración) y permitirá extender a otras librerías mediante hooks propios del proyecto.
 
 ### Riesgos identificados
 
@@ -56,5 +57,6 @@ Estado general: **Pendiente**
 ### Próximos pasos
 
 1. Documentar decisiones de convención vs bandera y comunicarlas en la guía (pendiente).
-2. Preparar historias de usuario para cada capa (dominio, aplicación, infraestructura, API, tests) antes de la Fase 2.
-3. Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` respecto al historial.
+2. Detallar el mecanismo de integración base con `stancl/tenancy` (detección, stubs y configuración) y posibles puntos de extensión para otras librerías.
+3. Preparar historias de usuario para cada capa (dominio, aplicación, infraestructura, API, tests) antes de la Fase 2.
+4. Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` respecto al historial.
