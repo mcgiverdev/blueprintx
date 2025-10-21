@@ -54,9 +54,24 @@ Estado general: **Pendiente**
 - **Consistencia entre capas**: si una capa omite aplicar el scope tenant, se generan fugas de datos; requerirá pruebas cruzadas.
 - **OpenAPI/Postman**: la inclusión de headers o parámetros de tenant puede alterar especificaciones ya generadas.
 
+### Integración objetivo con `stancl/tenancy`
+
+- **Detección**: al ejecutar `blueprintx:generate`, comprobar la presencia de `stancl/tenancy` en `composer.json`. Si está instalado, habilitar helpers específicos (headers, middleware, traits).
+- **Configuración**: exponer una opción `features.tenancy` en `config/blueprintx.php` con los campos `driver` (`stancl`, `custom`), `auto_detect` y `middleware_alias`.
+- **Stubs**: preparar plantillas opcionales para `TenantAware` traits, middleware de inyección de tenant y tests de integración. Se incluirán solo cuando el blueprint marque `tenancy.mode = 'tenant'`.
+- **Puntos de extensión**: documentar hooks para que proyectos puedan registrar drivers custom (por ejemplo `spatie/laravel-multitenancy`) reutilizando la misma API.
+
 ### Próximos pasos
 
 1. Documentar decisiones de convención vs bandera y comunicarlas en la guía (pendiente).
 2. Detallar el mecanismo de integración base con `stancl/tenancy` (detección, stubs y configuración) y posibles puntos de extensión para otras librerías.
 3. Preparar historias de usuario para cada capa (dominio, aplicación, infraestructura, API, tests) antes de la Fase 2.
 4. Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` respecto al historial.
+
+### Historias de usuario preliminares
+
+- **Como desarrollador de dominio**, quiero que las entidades generadas incluyan automáticamente el campo `tenant_id` y scopes globales cuando el blueprint sea multi-tenant para evitar olvidos.
+- **Como desarrollador de aplicación**, necesito que los comandos/queries reciban el tenant actual o lo resuelvan vía contexto para mantener la lógica de negocio aislada.
+- **Como desarrollador de infraestructura**, deseo que los repositorios aplican filtros tenant-aware y generen migraciones con llaves foráneas a `tenants`.
+- **Como desarrollador de API**, quiero que los controladores y recursos verifiquen el tenant y respondan con datos aislados, incluyendo headers requeridos por `stancl/tenancy`.
+- **Como QA**, necesito pruebas y snapshots que cubran escenarios central y tenant para garantizar que los cambios no mezclan datos.
