@@ -61,10 +61,54 @@ Estado general: **Pendiente**
 - **Stubs**: preparar plantillas opcionales para `TenantAware` traits, middleware de inyección de tenant y tests de integración. Se incluirán solo cuando el blueprint marque `tenancy.mode = 'tenant'`.
 - **Puntos de extensión**: documentar hooks para que proyectos puedan registrar drivers custom (por ejemplo `spatie/laravel-multitenancy`) reutilizando la misma API.
 
+#### Flujo de detección y activación
+
+1. El `DriverManager` revisa `composer.lock` y `config/blueprintx.features.tenancy.auto_detect`.
+   - Si `auto_detect = true` y `stancl/tenancy` está presente, activa el driver `stancl` implícitamente.
+   - Si `auto_detect = false`, respeta el valor de `features.tenancy.driver`.
+2. El `Blueprint` expone `getTenancyMode()` tomando la prioridad: flag explícito en YAML → convención de carpeta → `central` por defecto.
+3. `GenerationPipeline` inyecta el `TenancyContext` a cada generador. Este contexto incluye `mode`, `driver`, `shouldGenerateTenantArtifacts` y `middleware_alias`.
+4. Los generadores deciden si aplicar scopes, columnas o middleware según el `TenancyContext` sin duplicar lógica por capa.
+
+#### Cambios propuestos en configuración
+
+```php
+'features' => [
+    'tenancy' => [
+        'driver' => env('BLUEPRINTX_TENANCY_DRIVER', 'none'), // none, stancl, custom
+        'auto_detect' => env('BLUEPRINTX_TENANCY_AUTO_DETECT', true),
+        'middleware_alias' => env('BLUEPRINTX_TENANCY_MIDDLEWARE', 'tenancy'),
+        'namespace_overrides' => [
+            'middleware' => null, // permite redefinir el namespace usado en los stubs
+            'traits' => null,
+        ],
+    ],
+],
+```
+
+- Se documentará que `driver = 'none'` ignora el paquete aunque esté instalado.
+- Los proyectos que requieran otro driver pueden establecer `driver = 'custom'` y registrar hooks en el service provider del proyecto.
+
+#### Stubs y plantillas condicionadas
+
+- `DomainLayerGenerator`: añade el trait `TenantAwareEntity` y la columna `tenant_id` cuando `mode = tenant`.
+- `ApplicationLayerGenerator`: incorpora un helper `resolveTenant()` y actualiza comandos/queries para recibir el tenant actual.
+- `InfrastructureLayerGenerator`: genera repositorios con scope global `byTenant` y migraciones con llave foránea `tenant_id`.
+- `ApiLayerGenerator`: agrega middleware `{middleware_alias}` y headers sugeridos (`X-Tenant`) para endpoints tenant-aware.
+- `TestsLayerGenerator`: introduce escenarios duplicados `central` vs `tenant` y helpers para sembrar tenants de prueba.
+- Los stubs vivirán bajo `resources/templates/hexagonal/tenancy/` y solo se copian cuando `TenancyContext::shouldGenerateTenantArtifacts()` sea verdadero.
+
+#### Hooks para drivers personalizados
+
+- Exponer una interfaz `Contracts\TenancyDriver` con métodos `register(Container $app)`, `provideMiddlewareAlias()` y `augmentBlueprint(Blueprint $blueprint)`.
+- Permitir registrar drivers adicionales en `config/blueprintx.php['features']['tenancy']['drivers']` (mapa alias ⇒ clase).
+- Documentar ejemplos de integración con `spatie/laravel-multitenancy` mostrando cómo reemplazar middleware y factories de tenant.
+- Añadir evento `TenancyDriverDetected` para que el proyecto pueda reaccionar (por ejemplo, cargando bindings adicionales o validaciones).
+
 ### Próximos pasos
 
 1. ☑ Completado - 2025-10-21: Documentar decisiones de convención vs bandera en la guía (`docs/guides/workflow.md#6-convenciones-de-tenancy`).
-2. Detallar el mecanismo de integración base con `stancl/tenancy` (detección, stubs y configuración) y posibles puntos de extensión para otras librerías.
+2. ☑ Completado - 2025-10-21: Detallar el mecanismo de integración base con `stancl/tenancy` (secciones de detección, configuración, stubs y hooks).
 3. Preparar historias de usuario para cada capa (dominio, aplicación, infraestructura, API, tests) antes de la Fase 2.
 4. Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` respecto al historial.
 5. Entrevistar a usuarios actuales (1-2 proyectos) para validar requerimientos de tenancy y priorizar entregables.
