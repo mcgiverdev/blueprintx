@@ -41,3 +41,11 @@ parent: Guías
 - Cuando agregues nuevas características al generador, incluye casos de prueba y snapshots en `packages/blueprintx/tests`.
 - Revisa periódicamente la [referencia de configuración](../reference/configuration.html) para sincronizar flags como `optimistic_locking` o namespaces personalizados con tu arquitectura.
 - Extiende `App\Application\Shared\Filters\QueryFilter` en tus filtros por módulo para mantener coherentes los includes permitidos, campos ordenables y lógica de búsqueda.
+
+## 6. Convenciones de tenancy
+
+- Organiza los blueprints en subcarpetas (`central/`, `tenant/`, `shared/`) dentro de `blueprints/` para reflejar su alcance. Los archivos ubicados directamente bajo `blueprints/` se tratan como `central` por compatibilidad.
+- Declara `tenancy.mode` dentro del blueprint cuando necesites anular la convención anterior. La convención de carpetas sigue siendo el valor por defecto si la llave no existe.
+- Mantén consistentes las rutas de salida (`paths.*`) para que los artefactos generados respeten el mismo modo tenancy que el blueprint de origen.
+- Registra la decisión global en `config/blueprintx.php` usando `features.tenancy.driver` para habilitar la integración con librerías como `stancl/tenancy`.
+- Documenta cualquier excepción (por ejemplo, módulos híbridos) en el propio YAML usando `metadata` para facilitar la revisión de pares.
