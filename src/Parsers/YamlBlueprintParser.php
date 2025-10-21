@@ -119,7 +119,7 @@ class YamlBlueprintParser implements BlueprintParser
         $options = array_merge($this->defaultOptions, Arr::get($data, 'options', []));
 
         $api = Arr::get($data, 'api', []);
-        $apiBasePath = isset($api['base_path']) && is_string($api['base_path']) ? $api['base_path'] : null;
+        $apiBasePath = $this->normalizeApiBasePath($api);
         $apiMiddleware = isset($api['middleware']) && is_array($api['middleware'])
             ? array_values(array_filter($api['middleware'], static fn ($middleware): bool => is_string($middleware)))
             : [];
@@ -179,6 +179,37 @@ class YamlBlueprintParser implements BlueprintParser
         }
 
         return array_map(static fn ($item): array => (array) $item, array_values($value));
+    }
+
+    private function normalizeApiBasePath(mixed $api): ?string
+    {
+        if (! is_array($api)) {
+            return null;
+        }
+
+        $candidates = [];
+
+        if (array_key_exists('base_path', $api)) {
+            $candidates[] = $api['base_path'];
+        }
+
+        if (array_key_exists('basePath', $api)) {
+            $candidates[] = $api['basePath'];
+        }
+
+        foreach ($candidates as $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            $trimmed = trim($value);
+
+            if ($trimmed !== '') {
+                return $trimmed;
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -19,6 +19,13 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private ?string $lastGeneratedTimestamp = null;
 
+    /**
+     * Tracks which seeder modules were refreshed during the current generation run.
+     *
+     * @var array<string, bool>
+     */
+    private array $refreshedSeederModules = [];
+
     private const RESERVED_TABLE_BASELINES = [
         'users' => [
             'fields' => ['name', 'email', 'email_verified_at', 'password', 'remember_token'],
@@ -511,6 +518,12 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function buildPrimaryKeyColumnDefinition(Field $field, ?array $relation): string
     {
+        $type = Str::lower((string) $field->type);
+
+        if ($type === 'id' && Str::lower($field->name) === 'id') {
+            return '$table->id();';
+        }
+
         $definition = $this->buildColumnDefinition($field, $relation);
 
         if (! preg_match('/->\s*primary\s*\(/i', $definition)) {
@@ -1416,7 +1429,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         return match ($type) {
             'string', 'text' => $this->stringFactoryValue($field, $rules, $needsStr),
-            'integer', 'biginteger', 'bigint' => [
+            'integer', 'biginteger', 'bigint', 'id' => [
                 'expression' => 'fake()->numberBetween(1, 1000)',
                 'is_expression' => true,
             ],
@@ -1522,6 +1535,14 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $moduleKey = $this->moduleKey($blueprint);
         $moduleStudly = $metadata['module_studly'] ?? $this->moduleSegment($blueprint);
+
+        if (! isset($this->refreshedSeederModules[$moduleKey])) {
+            if (isset($history['seeders'][$moduleKey]) && is_array($history['seeders'][$moduleKey])) {
+                $history['seeders'][$moduleKey]['entities'] = [];
+            }
+
+            $this->refreshedSeederModules[$moduleKey] = true;
+        }
 
         if (! is_string($moduleStudly) || $moduleStudly === '') {
             $moduleStudly = null;

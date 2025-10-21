@@ -357,7 +357,13 @@ class InfrastructureLayerGenerator implements LayerGenerator
 
         $rendered = $this->renderServiceProvider($bindings, $parsed['uses']);
 
-        return new GeneratedFile($providerPath, $rendered);
+        if ($existingContents !== null && trim($existingContents) === trim($rendered)) {
+            return null;
+        }
+
+        $overwrite = $existingContents !== null;
+
+        return new GeneratedFile($providerPath, $rendered, $overwrite);
     }
 
     /**

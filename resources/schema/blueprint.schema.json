@@ -48,6 +48,7 @@
           "type": {
             "type": "string",
             "enum": [
+              "id",
               "string",
               "text",
               "integer",

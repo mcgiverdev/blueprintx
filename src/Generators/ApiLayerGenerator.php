@@ -1321,10 +1321,22 @@ class ApiLayerGenerator implements LayerGenerator
 
         $middleware = $this->sanitizeMiddleware($blueprint->apiMiddleware());
 
-        if ($this->routeAlreadyRegistered($normalized, $controllerShort, $routeUri)) {
+        $existingRoute = $this->findRouteRegistration($normalized, $controllerShort);
+        $normalizedTargetUri = $this->normalizeRouteUri($routeUri);
+        $hasChanges = false;
+
+        if ($existingRoute !== null) {
+            $existingUri = $this->normalizeRouteUri($existingRoute['uri']);
+
+            if ($existingUri !== $normalizedTargetUri) {
+                $replacement = $this->buildRouteLine($controllerShort, $routeUri, $existingRoute['indent']);
+                $normalized = substr_replace($normalized, $replacement, $existingRoute['offset'], $existingRoute['length']);
+                $hasChanges = true;
+            }
+
             $updated = $this->restoreLineEndings($original, $normalized);
 
-            if ($updated === $original) {
+            if (! $hasChanges && $updated === $original) {
                 return null;
             }
 
@@ -1404,24 +1416,42 @@ class ApiLayerGenerator implements LayerGenerator
         return '[' . implode(', ', $items) . ']';
     }
 
-    private function routeAlreadyRegistered(string $contents, string $controllerShort, string $routeUri): bool
+    private function buildRouteLine(string $controllerShort, string $routeUri, string $indent = ''): string
     {
-        $controllerPattern = preg_quote($controllerShort, '/');
-        $uriPattern = preg_quote($routeUri, '/');
+        return $indent . sprintf("Route::apiResource('%s', %s::class);", $routeUri, $controllerShort);
+    }
 
-        $patterns = [
-            sprintf("/Route::[^\n;]*apiResource\\(['\"]%s['\"],\s*%s::class/", $uriPattern, $controllerPattern),
-            sprintf("/Route::[^\n;]*apiResource\\(['\"]\\/%s['\"],\s*%s::class/", $uriPattern, $controllerPattern),
-            sprintf("/apiResource\\([^;]*%s::class/", $controllerPattern),
-        ];
+    private function normalizeRouteUri(string $routeUri): string
+    {
+        $trimmed = trim($routeUri);
 
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $contents)) {
-                return true;
-            }
+        if ($trimmed === '') {
+            return '';
         }
 
-        return false;
+        return ltrim($trimmed, '/');
+    }
+
+    /**
+     * @return array{uri:string, indent:string, offset:int, length:int}|null
+     */
+    private function findRouteRegistration(string $contents, string $controllerShort): ?array
+    {
+        $pattern = sprintf(
+            '/(?P<indent>^[ \t]*)Route::apiResource\(\s*[\'\"](?P<uri>[^\'\"]+)[\'\"],\s*%s::class\s*\);/m',
+            preg_quote($controllerShort, '/'),
+        );
+
+        if (! preg_match($pattern, $contents, $matches, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+
+        return [
+            'uri' => $matches['uri'][0],
+            'indent' => $matches['indent'][0],
+            'offset' => $matches[0][1],
+            'length' => strlen($matches[0][0]),
+        ];
     }
 
     private function insertUseStatement(string $normalized, string $statement): string
