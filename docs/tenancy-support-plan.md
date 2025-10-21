@@ -6,7 +6,7 @@ Estado general: **Pendiente**
 
 | Nº | Fase | Alcance principal | Entregables | Estado |
 | --- | --- | --- | --- | --- |
-| 1 | Descubrimiento | Analizar necesidades de tenancy, revisar configuración actual, definir opciones (`central`, `tenant`, `shared`) y decisiones de carpeta vs bandera | Documento de alcance, lista de supuestos y riesgos | ☐ Pendiente |
+| 1 | Descubrimiento | Analizar necesidades de tenancy, revisar configuración actual, definir opciones (`central`, `tenant`, `shared`) y decisiones de carpeta vs bandera | Documento de alcance, lista de supuestos y riesgos | ⧗ En progreso - 2025-10-21 |
 | 2 | Esquema & Validación | Extender `blueprint.schema.json`, `openapi-minimal.schema.json`, y `DefaultBlueprintValidator` para aceptar `tenancy.mode`; definir defaults basados en convención de carpetas | Actualizaciones de esquema y validadores + pruebas unitarias | ☐ Pendiente |
 | 3 | Kernel & Configuración | Propagar el modo de tenancy en `GenerationPipeline`, `Blueprint` y config `blueprintx.features.tenancy`; añadir toggles y documentación de configuración | Código kernel actualizado, pruebas unitarias, docs de configuración | ☐ Pendiente |
 | 4 | Capa Dominio & Aplicación | Ajustar generadores domain/application para incluir campos tenant, scopes y dependencias; actualizar snapshots correspondientes | Nuevos templates, snapshots y pruebas verdes | ☐ Pendiente |
@@ -23,3 +23,38 @@ Estado general: **Pendiente**
 
 - Mantener un `CHANGELOG` específico si se requieren breaking changes.
 - Preparar tareas posteriores para soporte multi-tenant en UI o integraciones externas.
+
+## Fase 1 · Descubrimiento (2025-10-21)
+
+### Objetivos
+
+- Definir el alcance exacto del soporte tenancy (central, tenant, shared) dentro de BlueprintX.
+- Identificar puntos de integración necesarios en blueprint, validadores, pipeline y generadores.
+- Enumerar riesgos y supuestos antes de modificar el código.
+
+### Alcance actual
+
+- Blueprint YAML no declara tenancy; se infiere solamente por estructura de carpetas.
+- `blueprint.schema.json` y `DefaultBlueprintValidator` no contemplan claves de tenancy.
+- Los generadores (dominio, aplicación, infraestructura, API, tests) no aplican scopes ni columnas específicas de tenant.
+- No existe configuración en `config/blueprintx.php` relacionada a tenancy ni feature flags.
+
+### Supuestos iniciales
+
+- Los proyectos que adopten tenancy usarán Laravel Sanctum u otra capa de autenticación ya existente.
+- La tabla `tenants` (o equivalente) existe en las implementaciones y provee una llave foránea estándar (`tenant_id`).
+- El modo tenancy debe ser configurable por blueprint individual, permitiendo combinaciones central/tenant/shared dentro del mismo módulo.
+- Se mantendrá compatibilidad retroactiva: los blueprints existentes sin flag explícito continuarán funcionando como `central`.
+
+### Riesgos identificados
+
+- **Compatibilidad de plantillas**: snapshots existentes deberán actualizarse; riesgo de romper proyectos si el flag inicia sin defaults claros.
+- **Sobrecarga de configuración**: si la bandera es obligatoria, se incrementa el trabajo para usuarios; se mitigará con defaults y convención de directorios.
+- **Consistencia entre capas**: si una capa omite aplicar el scope tenant, se generan fugas de datos; requerirá pruebas cruzadas.
+- **OpenAPI/Postman**: la inclusión de headers o parámetros de tenant puede alterar especificaciones ya generadas.
+
+### Próximos pasos
+
+1. Documentar decisiones de convención vs bandera y comunicarlas en la guía (pendiente).
+2. Preparar historias de usuario para cada capa (dominio, aplicación, infraestructura, API, tests) antes de la Fase 2.
+3. Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` respecto al historial.
