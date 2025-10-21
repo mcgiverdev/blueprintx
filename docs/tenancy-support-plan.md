@@ -109,9 +109,9 @@ Estado general: **Pendiente**
 
 1. ☑ Completado - 2025-10-21: Documentar decisiones de convención vs bandera en la guía (`docs/guides/workflow.md#6-convenciones-de-tenancy`).
 2. ☑ Completado - 2025-10-21: Detallar el mecanismo de integración base con `stancl/tenancy` (secciones de detección, configuración, stubs y hooks).
-3. Preparar historias de usuario para cada capa (dominio, aplicación, infraestructura, API, tests) antes de la Fase 2.
-4. Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` respecto al historial.
-5. Entrevistar a usuarios actuales (1-2 proyectos) para validar requerimientos de tenancy y priorizar entregables.
+3. ☑ Completado - 2025-10-21: Preparar historias de usuario para cada capa (`Historias de usuario por capa`).
+4. ☑ Completado - 2025-10-21: Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` (`Impacto esperado en comandos`).
+5. ⧗ Pendiente: Entrevistar a usuarios actuales (1-2 proyectos) para validar requerimientos de tenancy y priorizar entregables.
 
 ### Historias de usuario preliminares
 
@@ -188,6 +188,17 @@ Como QA, quiero que las pruebas generadas cubran ambos contextos para prevenir r
 | Helpers | Se incluyen helpers para crear tenants en `setUp()` y limpiar aislamiento entre pruebas. |
 | Snapshots | Las snapshots diferencian los sufijos `Central` y `Tenant` para facilitar el mantenimiento. |
 
-1. ☑ Completado - 2025-10-21: Documentar decisiones de convención vs bandera en la guía (`docs/guides/workflow.md#6-convenciones-de-tenancy`).
-2. ☑ Completado - 2025-10-21: Detallar el mecanismo de integración base con `stancl/tenancy` (secciones de detección, configuración, stubs y hooks).
-3. ☑ Completado - 2025-10-21: Preparar historias de usuario para cada capa (`Historias de usuario por capa`).
+#### Impacto esperado en comandos
+
+- `blueprintx:generate`
+  - Detectará el modo tenancy por blueprint y registrará `tenancy_mode` en `.blueprintx/history.json` para auditorías.
+  - Guardará en el historial los artefactos tenant-aware generados (middleware, traits, tests) para que `rollback` los revierta con exactitud.
+  - Añadirá la bandera `--tenancy=auto|central|tenant|shared` para forzar un modo puntual; validará contra `features.tenancy.driver` y mostrará un warning si el driver global es `none`.
+  - Emitirá un aviso cuando se detecte `stancl/tenancy` pero `auto_detect=false` para que el usuario revise la configuración antes de continuar.
+- `blueprintx:rollback`
+  - Filtrará las entradas por `tenancy_mode` al preparar la reversión, evitando eliminar archivos de otro contexto.
+  - Borrará únicamente los artefactos asociados al driver activo (`stancl` por defecto) para proteger personalizaciones centrales.
+  - Presentará un resumen previo con los archivos tenant-aware a eliminar y pedirá confirmación si hay migraciones compartidas.
+- Historial y telemetría
+  - Sumará `tenant_driver` al historial para medir adopción de `stancl` frente a drivers personalizados.
+  - Recomendaremos versionar `.blueprintx/history.json` para asegurar rollbacks coherentes entre entornos.
