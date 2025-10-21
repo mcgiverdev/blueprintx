@@ -67,6 +67,7 @@ Estado general: **Pendiente**
 2. Detallar el mecanismo de integración base con `stancl/tenancy` (detección, stubs y configuración) y posibles puntos de extensión para otras librerías.
 3. Preparar historias de usuario para cada capa (dominio, aplicación, infraestructura, API, tests) antes de la Fase 2.
 4. Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` respecto al historial.
+5. Entrevistar a usuarios actuales (1-2 proyectos) para validar requerimientos de tenancy y priorizar entregables.
 
 ### Historias de usuario preliminares
 
