@@ -154,19 +154,12 @@ class ApiLayerGenerator implements LayerGenerator
         $controllerTraits = $this->finalizeControllerTraits([
             'optimistic_locking' => $optimisticLocking['enabled'] ?? false,
         ]);
-        $moduleContext = [
-            'raw' => $blueprint->module(),
-            'segments' => $blueprint->moduleSegments(),
-            'namespace' => $blueprint->moduleNamespace(),
-            'path' => $blueprint->modulePath(),
-            'class_prefix' => $blueprint->moduleClassPrefix(),
-        ];
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $moduleContext['namespace'],
-            'module_context' => $moduleContext,
+            'module' => $blueprint->moduleNamespace(),
+            'module_context' => $this->moduleContext($blueprint),
             'namespaces' => $namespaces,
             'application' => $this->deriveApplicationNamespaces($blueprint, $options),
             'naming' => $this->namingContext($blueprint),
@@ -280,6 +273,21 @@ class ApiLayerGenerator implements LayerGenerator
             'entity_studly' => $entityName,
             'entity_plural_studly' => Str::pluralStudly($entityName),
             'entity_variable' => Str::camel($blueprint->entity()),
+        ];
+    }
+
+    private function moduleSegment(Blueprint $blueprint): ?string
+    {
+        return $blueprint->moduleNamespace();
+    }
+
+    private function moduleContext(Blueprint $blueprint): array
+    {
+        return [
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
         ];
     }
 

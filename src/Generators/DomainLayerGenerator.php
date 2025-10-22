@@ -113,19 +113,12 @@ class DomainLayerGenerator implements LayerGenerator
         ];
 
         $namespaces = $this->deriveNamespaces($blueprint, $options);
-        $moduleContext = [
-            'raw' => $blueprint->module(),
-            'segments' => $blueprint->moduleSegments(),
-            'namespace' => $blueprint->moduleNamespace(),
-            'path' => $blueprint->modulePath(),
-            'class_prefix' => $blueprint->moduleClassPrefix(),
-        ];
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $moduleContext['namespace'],
-            'module_context' => $moduleContext,
+            'module' => $blueprint->moduleNamespace(),
+            'module_context' => $this->moduleContext($blueprint),
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'model' => $this->deriveModelContext($blueprint, $namespaces),
@@ -192,6 +185,16 @@ class DomainLayerGenerator implements LayerGenerator
             'shared_domain_not_found_exception' => sprintf('%s/DomainNotFoundException.php', $sharedRootPath),
             'shared_domain_conflict_exception' => sprintf('%s/DomainConflictException.php', $sharedRootPath),
             'shared_domain_validation_exception' => sprintf('%s/DomainValidationException.php', $sharedRootPath),
+        ];
+    }
+
+    private function moduleContext(Blueprint $blueprint): array
+    {
+        return [
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
         ];
     }
 

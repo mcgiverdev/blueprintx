@@ -94,6 +94,43 @@ class Blueprint
         return $this->module;
     }
 
+    /**
+     * @return array<int, string>
+     */
+    public function moduleSegments(): array
+    {
+        if ($this->module === null || trim($this->module) === '') {
+            return [];
+        }
+
+        $normalized = str_replace('\\', '/', $this->module);
+        $segments = array_values(array_filter(
+            explode('/', $normalized),
+            static fn (string $segment): bool => $segment !== ''
+        ));
+
+        return array_map(static fn (string $segment): string => Str::studly($segment), $segments);
+    }
+
+    public function moduleNamespace(): ?string
+    {
+        $segments = $this->moduleSegments();
+
+        return $segments === [] ? null : implode('\\', $segments);
+    }
+
+    public function modulePath(): ?string
+    {
+        $segments = $this->moduleSegments();
+
+        return $segments === [] ? null : implode('/', $segments);
+    }
+
+    public function moduleClassPrefix(): string
+    {
+        return implode('', $this->moduleSegments());
+    }
+
     public function entity(): string
     {
         return $this->entity;
@@ -216,41 +253,6 @@ class Blueprint
     public function apiResources(): array
     {
         return $this->apiResources;
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    public function moduleSegments(): array
-    {
-        if ($this->module === null || $this->module === '') {
-            return [];
-        }
-
-        $segments = array_values(array_filter(explode('/', str_replace('\\', '/', $this->module))));
-
-        return array_map(static fn (string $segment): string => Str::studly($segment), $segments);
-    }
-
-    public function moduleNamespace(): ?string
-    {
-        $segments = $this->moduleSegments();
-
-        return $segments === [] ? null : implode('\\', $segments);
-    }
-
-    public function modulePath(): ?string
-    {
-        $segments = $this->moduleSegments();
-
-        return $segments === [] ? null : implode('/', $segments);
-    }
-
-    public function moduleClassPrefix(): ?string
-    {
-        $segments = $this->moduleSegments();
-
-        return $segments === [] ? null : implode('', $segments);
     }
 
     private function schemaErrors(): array

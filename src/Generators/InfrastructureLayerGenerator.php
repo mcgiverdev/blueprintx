@@ -73,19 +73,12 @@ class InfrastructureLayerGenerator implements LayerGenerator
         $namespaces = $this->deriveNamespaces($blueprint, $options);
         $domainNamespaces = $this->deriveDomainNamespaces($blueprint, $options);
         $applicationNamespaces = $this->deriveApplicationNamespaces($blueprint, $options);
-        $moduleContext = [
-            'raw' => $blueprint->module(),
-            'segments' => $blueprint->moduleSegments(),
-            'namespace' => $blueprint->moduleNamespace(),
-            'path' => $blueprint->modulePath(),
-            'class_prefix' => $blueprint->moduleClassPrefix(),
-        ];
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $moduleContext['namespace'],
-            'module_context' => $moduleContext,
+            'module' => $blueprint->moduleNamespace(),
+            'module_context' => $this->moduleContext($blueprint),
             'namespaces' => $namespaces,
             'domain' => $domainNamespaces,
             'application' => $applicationNamespaces,
@@ -186,6 +179,16 @@ class InfrastructureLayerGenerator implements LayerGenerator
         return [
             'entity_studly' => $entityName,
             'entity_variable' => Str::camel($blueprint->entity()),
+        ];
+    }
+
+    private function moduleContext(Blueprint $blueprint): array
+    {
+        return [
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
         ];
     }
 

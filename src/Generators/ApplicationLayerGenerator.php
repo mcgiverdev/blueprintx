@@ -97,19 +97,12 @@ class ApplicationLayerGenerator implements LayerGenerator
         ];
 
         $namespaces = $this->deriveNamespaces($blueprint, $options);
-        $moduleContext = [
-            'raw' => $blueprint->module(),
-            'segments' => $blueprint->moduleSegments(),
-            'namespace' => $blueprint->moduleNamespace(),
-            'path' => $blueprint->modulePath(),
-            'class_prefix' => $blueprint->moduleClassPrefix(),
-        ];
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $moduleContext['namespace'],
-            'module_context' => $moduleContext,
+            'module' => $blueprint->moduleNamespace(),
+            'module_context' => $this->moduleContext($blueprint),
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'domain' => $this->deriveDomainNamespaces($blueprint, $options),
@@ -298,6 +291,16 @@ class ApplicationLayerGenerator implements LayerGenerator
             'models' => $root . '\\Models',
             'repositories' => $root . '\\Repositories',
             'shared_exceptions' => trim($options['namespaces']['domain_shared_exceptions'] ?? 'App\\Domain\\Shared\\Exceptions', '\\'),
+        ];
+    }
+
+    private function moduleContext(Blueprint $blueprint): array
+    {
+        return [
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
         ];
     }
 }

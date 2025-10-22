@@ -96,7 +96,7 @@ class YamlBlueprintParser implements BlueprintParser
      */
     private function normalize(array $data, string $fullPath): array
     {
-    $module = $this->detectModule($fullPath);
+        $module = $this->detectModule($fullPath);
 
         $entity = Arr::get($data, 'entity');
         if (! is_string($entity) || $entity === '') {
@@ -477,7 +477,7 @@ class YamlBlueprintParser implements BlueprintParser
         array_pop($segments); // remove filename
         $module = implode('/', array_filter($segments));
 
-        return $this->sanitizeModule($module !== '' ? $module : null, $fullPath);
+        return $module !== '' ? $module : null;
     }
 
     private function isAbsolutePath(string $path): bool
@@ -491,41 +491,5 @@ class YamlBlueprintParser implements BlueprintParser
         }
 
         return (bool) preg_match('~^[A-Za-z]:[\\\/]~', $path);
-    }
-
-    private function sanitizeModule(?string $module, string $context): ?string
-    {
-        if ($module === null) {
-            return null;
-        }
-
-        $trimmed = trim(str_replace('\\', '/', $module), '/');
-
-        if ($trimmed === '') {
-            return null;
-        }
-
-        $segments = array_values(array_filter(explode('/', $trimmed), static fn ($segment): bool => $segment !== ''));
-
-        if ($segments === []) {
-            return null;
-        }
-
-        $normalized = [];
-
-        foreach ($segments as $segment) {
-            $candidate = strtolower(trim($segment));
-            $candidate = preg_replace('/[^a-z0-9_]/', '_', $candidate ?? '');
-            $candidate = preg_replace('/_{2,}/', '_', $candidate ?? '');
-            $candidate = trim((string) $candidate, '_');
-
-            if ($candidate === '') {
-                throw new BlueprintParseException(sprintf('El módulo detectado para "%s" contiene segmentos inválidos.', $context));
-            }
-
-            $normalized[] = $candidate;
-        }
-
-        return implode('/', $normalized);
     }
 }

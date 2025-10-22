@@ -805,14 +805,31 @@ class AuthScaffoldingCreator
             return null;
         }
 
-        if (! is_string($module) || $module === '') {
-            $module = 'Shared';
-        }
-
-        $moduleSegment = Str::studly($module);
+        $moduleSegment = $this->normalizeModuleNamespace($module);
         $entitySegment = Str::studly($entity);
 
         return sprintf('App\\Domain\\%s\\Models\\%s', $moduleSegment, $entitySegment);
+    }
+
+    private function normalizeModuleNamespace(?string $module): string
+    {
+        if (! is_string($module) || trim($module) === '') {
+            return 'Shared';
+        }
+
+        $normalized = str_replace('\\', '/', $module);
+        $segments = array_values(array_filter(
+            explode('/', $normalized),
+            static fn (string $segment): bool => $segment !== ''
+        ));
+
+        if ($segments === []) {
+            return 'Shared';
+        }
+
+        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
+
+        return implode('\\', $studlySegments);
     }
 
     private function deriveDomainAlias(string $domainFqn): string
