@@ -13,6 +13,7 @@ use BlueprintX\Kernel\History\GenerationHistoryManager;
 use BlueprintX\Kernel\Generation\PipelineResult;
 use BlueprintX\Kernel\GenerationPipeline;
 use BlueprintX\Support\Auth\AuthScaffoldingCreator;
+use BlueprintX\Support\Tenancy\TenancyScaffoldingCreator;
 use BlueprintX\Validation\ValidationMessage;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
@@ -47,6 +48,7 @@ SIGNATURE;
         private readonly GenerationPipeline $pipeline,
         private readonly BlueprintLocator $locator,
         private readonly AuthScaffoldingCreator $authScaffolding,
+        private readonly TenancyScaffoldingCreator $tenancyScaffolding,
         private readonly GenerationHistoryManager $history,
     ) {
         parent::__construct();
@@ -382,6 +384,33 @@ SIGNATURE;
         }
 
         if (! $dryRun && ! $hasErrors) {
+            $tenancyScaffoldResult = $this->tenancyScaffolding->ensure([
+                'enabled' => $tenancyScaffoldEnabled,
+                'blueprints_path' => $blueprintsPath,
+                'relative_path' => $tenancyBlueprintRelative,
+                'middleware_alias' => $tenancyMiddlewareAlias,
+                'driver_label' => $tenancyDriverLabel,
+                'dry_run' => $dryRun,
+                'force' => $force,
+            ]);
+
+            if (is_array($tenancyScaffoldResult)) {
+                $status = (string) ($tenancyScaffoldResult['status'] ?? '');
+
+                if (in_array($status, ['written', 'overwritten'], true)) {
+                    $this->line(sprintf(
+                        '  [tenancy] Blueprint base %s en "%s".',
+                        $status === 'overwritten' ? 'actualizado' : 'generado',
+                        $tenancyScaffoldResult['path'] ?? $tenancyBlueprintRelative
+                    ));
+                } elseif ($status === 'error') {
+                    $this->warn(sprintf(
+                        '  [tenancy] No se pudo scaffoldear el blueprint base: %s',
+                        (string) ($tenancyScaffoldResult['message'] ?? 'error desconocido')
+                    ));
+                }
+            }
+
             $authModelData = $authModelBlueprint instanceof Blueprint ? $authModelBlueprint->toArray() : null;
             $scaffoldingArchitecture = $architectureOverride !== null
                 ? $this->normalizeArchitecture($architectureOverride, $defaultArchitecture)

@@ -80,6 +80,15 @@ class DomainLayerGenerator implements LayerGenerator
             ];
         }
 
+        if (($context['tenancy']['generate_trait'] ?? false) === true) {
+            $templates[] = [
+                'template' => sprintf('@%s/tenancy/tenant_aware_entity.stub.twig', $driver->name()),
+                'path' => $paths['shared_domain_tenant_trait'],
+                'context' => $context,
+                'overwrite' => true,
+            ];
+        }
+
         foreach ($templates as $item) {
             if (! $this->templates->exists($item['template'])) {
                 $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa domain en "%s".', $item['template'], $driver->name()));
@@ -88,7 +97,8 @@ class DomainLayerGenerator implements LayerGenerator
 
             $result->addFile(new GeneratedFile(
                 $item['path'],
-                $this->templates->render($item['template'], $item['context'])
+                $this->templates->render($item['template'], $item['context']),
+                (bool) ($item['overwrite'] ?? false)
             ));
         }
 
@@ -124,6 +134,7 @@ class DomainLayerGenerator implements LayerGenerator
             'errors' => [
                 'custom' => $this->buildCustomErrors($blueprint, $namespaces, $paths),
             ],
+            'tenancy' => $this->buildTenancyContext($blueprint, $options, $paths, $namespaces),
             'driver' => [
                 'name' => $driver->name(),
                 'layers' => $driver->layers(),
@@ -155,7 +166,64 @@ class DomainLayerGenerator implements LayerGenerator
             'domain_exceptions' => $domainRoot . '\\Exceptions',
             'shared_root' => $base,
             'shared_exceptions' => trim($options['namespaces']['domain_shared_exceptions'] ?? $base . '\\Shared\\Exceptions', '\\'),
+            'domain_shared_concerns' => trim($options['namespaces']['domain_shared_concerns'] ?? $base . '\\Shared\\Concerns', '\\'),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, string> $paths
+     * @param array<string, string> $namespaces
+     * @return array<string, mixed>
+     */
+    private function buildTenancyContext(Blueprint $blueprint, array $options, array $paths, array $namespaces): array
+    {
+        $tenancyOptions = is_array($options['tenancy'] ?? null) ? $options['tenancy'] : [];
+
+        $enabled = (bool) ($tenancyOptions['enabled'] ?? false);
+        $mode = strtolower((string) ($tenancyOptions['blueprint_mode'] ?? 'central'));
+
+        if (! in_array($mode, ['central', 'tenant', 'shared'], true)) {
+            $mode = 'central';
+        }
+
+        $applies = $enabled && in_array($mode, ['tenant', 'shared'], true);
+
+        return [
+            'enabled' => $enabled,
+            'mode' => $mode,
+            'driver' => $tenancyOptions['driver'] ?? null,
+            'trait_namespace' => $namespaces['domain_shared_concerns'],
+            'trait_path' => $paths['shared_domain_tenant_trait'],
+            'foreign_key' => $this->resolveTenantForeignKey($blueprint),
+            'generate_trait' => $applies,
+            'applies_to_entity' => $applies,
+        ];
+    }
+
+    private function resolveTenantForeignKey(Blueprint $blueprint): string
+    {
+        foreach ($blueprint->fields() as $field) {
+            $name = $field->name;
+
+            if ($name === 'tenant_id') {
+                return 'tenant_id';
+            }
+
+            if (str_contains($name, 'tenant') && str_ends_with($name, '_id')) {
+                return $name;
+            }
+        }
+
+        foreach ($blueprint->relations() as $relation) {
+            $field = $relation->field;
+
+            if ($field !== '' && str_contains($field, 'tenant')) {
+                return $field;
+            }
+        }
+
+        return 'tenant_id';
     }
 
     /**
@@ -175,6 +243,7 @@ class DomainLayerGenerator implements LayerGenerator
         }
 
         $sharedRootPath = sprintf('%s/Shared/Exceptions', $basePath);
+        $sharedConcernsPath = sprintf('%s/Shared/Concerns', $basePath);
 
         return [
             'model' => sprintf('%s/Models/%s.php', $root, $entityName),
@@ -184,6 +253,7 @@ class DomainLayerGenerator implements LayerGenerator
             'shared_domain_not_found_exception' => sprintf('%s/DomainNotFoundException.php', $sharedRootPath),
             'shared_domain_conflict_exception' => sprintf('%s/DomainConflictException.php', $sharedRootPath),
             'shared_domain_validation_exception' => sprintf('%s/DomainValidationException.php', $sharedRootPath),
+            'shared_domain_tenant_trait' => sprintf('%s/TenantAwareEntity.php', $sharedConcernsPath),
         ];
     }
 

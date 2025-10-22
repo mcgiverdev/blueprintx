@@ -77,4 +77,73 @@ class GenerateBlueprintsCommandTest extends TestCase
             ->expectsOutputToContain('Resumen: 1 archivo(s) procesados')
             ->assertExitCode(Command::SUCCESS);
     }
+
+    public function test_it_scaffolds_tenancy_blueprint_when_missing(): void
+    {
+        $blueprintPath = $this->putBlueprint('hr/department.yaml');
+
+        $blueprint = Blueprint::fromArray([
+            'path' => 'blueprints/hr/department.yaml',
+            'module' => 'hr',
+            'entity' => 'Department',
+            'table' => 'departments',
+            'architecture' => 'hexagonal',
+            'fields' => [
+                ['name' => 'id', 'type' => 'uuid'],
+            ],
+            'relations' => [],
+            'options' => [],
+            'api' => [
+                'base_path' => '/api/hr/departments',
+                'middleware' => [],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [],
+        ]);
+
+        $parser = Mockery::mock(BlueprintParser::class);
+        $parser->shouldReceive('parse')->once()->with($blueprintPath)->andReturn($blueprint);
+        $this->app->instance(BlueprintParser::class, $parser);
+
+        $validation = new ValidationResult();
+
+        $validator = Mockery::mock(BlueprintValidator::class);
+        $validator->shouldReceive('validate')->once()->with($blueprint)->andReturn($validation);
+        $this->app->instance(BlueprintValidator::class, $validator);
+
+        $pipelineResult = new PipelineResult();
+
+        $pipeline = Mockery::mock(GenerationPipeline::class);
+        $pipeline->shouldReceive('generate')->once()->with(
+            $blueprint,
+            Mockery::on(function (array $options): bool {
+                return ($options['dry_run'] ?? true) === false
+                    && array_key_exists('force', $options)
+                    && $options['force'] === false;
+            })
+        )->andReturn($pipelineResult);
+        $this->app->instance(GenerationPipeline::class, $pipeline);
+
+        $tenantsBlueprint = $this->blueprintsPath('central/tenancy/tenants.yaml');
+        $this->assertFileDoesNotExist($tenantsBlueprint);
+
+        $this->artisan('blueprintx:generate', [
+            '--module' => 'hr',
+            '--entity' => 'department',
+        ])
+            ->expectsOutput('Se encontraron 1 blueprint(s) para generar.')
+            ->expectsOutputToContain('Blueprint base generado en "central/tenancy/tenants.yaml"')
+            ->expectsOutputToContain('Resumen: 0 archivo(s) procesados')
+            ->assertExitCode(Command::SUCCESS);
+
+        $this->assertFileExists($tenantsBlueprint);
+
+        $contents = file_get_contents($tenantsBlueprint);
+        $this->assertIsString($contents);
+        $this->assertStringContainsString('module: tenancy', $contents);
+        $this->assertStringContainsString('tenancy:', $contents);
+        $this->assertStringContainsString('middleware:', $contents);
+    }
 }

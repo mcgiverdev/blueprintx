@@ -11,6 +11,7 @@ use BlueprintX\Kernel\Generation\PipelineResult;
 use BlueprintX\Kernel\GenerationPipeline;
 use BlueprintX\Kernel\History\GenerationHistoryManager;
 use BlueprintX\Support\Auth\AuthScaffoldingCreator;
+use BlueprintX\Support\Tenancy\TenancyScaffoldingCreator;
 use BlueprintX\Validation\ValidationMessage;
 use BlueprintX\Validation\ValidationResult;
 use Illuminate\Console\Command;
@@ -197,6 +198,13 @@ class GenerateBlueprintsCommandTest extends TestCase
             ->getMock();
     $authScaffolding->expects($expectsAuthScaffolding ? $this->once() : $this->never())->method('ensure');
 
+        /** @var TenancyScaffoldingCreator&MockObject $tenancyScaffolding */
+        $tenancyScaffolding = $this->getMockBuilder(TenancyScaffoldingCreator::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['ensure'])
+            ->getMock();
+        $tenancyScaffolding->expects($this->never())->method('ensure');
+
         $history = new GenerationHistoryManager(null, false);
 
         $command = new GenerateBlueprintsCommand(
@@ -205,6 +213,7 @@ class GenerateBlueprintsCommandTest extends TestCase
             $pipeline,
             new BlueprintLocator(),
             $authScaffolding,
+            $tenancyScaffolding,
             $history
         );
         $app = $this->makeContainer($blueprintsPath);
