@@ -78,6 +78,28 @@ return [
             'collection_name' => env('BLUEPRINTX_POSTMAN_COLLECTION', 'Generated API'),
             'version' => env('BLUEPRINTX_POSTMAN_VERSION', 'v1'),
         ],
+        'tenancy' => [
+            'enabled' => env('BLUEPRINTX_TENANCY_ENABLED', true),
+            'driver' => env('BLUEPRINTX_TENANCY_DRIVER', 'auto'),
+            'auto_detect' => env('BLUEPRINTX_TENANCY_AUTO_DETECT', true),
+            'middleware_alias' => env('BLUEPRINTX_TENANCY_MIDDLEWARE_ALIAS', 'tenant'),
+            'scaffold' => [
+                'enabled' => env('BLUEPRINTX_TENANCY_SCAFFOLD', true),
+                'blueprint_path' => env('BLUEPRINTX_TENANCY_BLUEPRINT_PATH', 'central/tenancy/tenants.yaml'),
+            ],
+            'drivers' => [
+                'stancl' => [
+                    'label' => 'stancl/tenancy',
+                    'package' => 'stancl/tenancy',
+                    'install' => [
+                        'composer require stancl/tenancy',
+                        'php artisan tenancy:install',
+                        'php artisan migrate',
+                    ],
+                    'guide_url' => 'https://tenancyforlaravel.com/docs/v4/',
+                ],
+            ],
+        ],
     ],
 
     'generators' => [

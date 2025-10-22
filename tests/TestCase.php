@@ -36,8 +36,17 @@ abstract class TestCase extends OrchestraTestCase
         $baseConfig['history']['enabled'] = true;
         $baseConfig['history']['path'] = $historyPath;
 
-    $app['config']->set('blueprintx', $baseConfig);
-    $app['config']->set('app.key', 'base64:' . base64_encode(random_bytes(32)));
+        $baseConfig['features']['tenancy'] = $baseConfig['features']['tenancy'] ?? [];
+        $baseConfig['features']['tenancy']['enabled'] = true;
+        $baseConfig['features']['tenancy']['driver'] = 'stancl';
+        $baseConfig['features']['tenancy']['auto_detect'] = true;
+        $baseConfig['features']['tenancy']['middleware_alias'] = $baseConfig['features']['tenancy']['middleware_alias'] ?? 'tenant';
+        $baseConfig['features']['tenancy']['scaffold'] = $baseConfig['features']['tenancy']['scaffold'] ?? [];
+        $baseConfig['features']['tenancy']['scaffold']['enabled'] = $baseConfig['features']['tenancy']['scaffold']['enabled'] ?? true;
+        $baseConfig['features']['tenancy']['scaffold']['blueprint_path'] = $baseConfig['features']['tenancy']['scaffold']['blueprint_path'] ?? 'central/tenancy/tenants.yaml';
+
+        $app['config']->set('blueprintx', $baseConfig);
+        $app['config']->set('app.key', 'base64:' . base64_encode(random_bytes(32)));
         $app['config']->set('app.debug', true);
     }
 

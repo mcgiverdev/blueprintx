@@ -52,6 +52,23 @@ SIGNATURE;
         parent::__construct();
     }
 
+    /**
+     * @var array<string, mixed>|null
+     */
+    private ?array $composerConfig = null;
+
+    /**
+     * @var array<string, bool>
+     */
+    private array $tenancyDriverConfigWarnings = [];
+
+    /**
+     * @var array<string, bool>
+     */
+    private array $tenancyMissingDriverWarnings = [];
+
+    private bool $tenancyFeatureDisabledWarning = false;
+
     public function handle(): int
     {
         $module = $this->normalizeNullableString($this->option('module') ?: $this->argument('module'));
@@ -83,6 +100,25 @@ SIGNATURE;
         $formRequestsPath = $this->normalizeRelativePath($formRequestFeature['path'] ?? null, $defaultRequestsPath);
         $resourcesPath = $this->normalizeRelativePath($resourcesFeature['path'] ?? null, $defaultResourcesPath);
         $postmanPath = $this->normalizeRelativePath($pathsConfig['postman'] ?? null, 'docs/postman');
+        $tenancyRuntime = $this->resolveTenancyRuntime($config['features']['tenancy'] ?? []);
+        $tenancyEnabled = $tenancyRuntime['enabled'];
+        $tenancyConfiguredDriver = $tenancyRuntime['configured_driver'];
+        $tenancyDriver = $tenancyRuntime['driver'];
+        $tenancyDriverInstalled = $tenancyRuntime['driver_installed'];
+        $tenancyDriverPackage = $tenancyRuntime['driver_package'];
+        $tenancyInstallCommands = $tenancyRuntime['install_commands'];
+        $tenancyGuideUrl = $tenancyRuntime['guide_url'];
+        $tenancyMiddlewareAlias = $tenancyRuntime['middleware_alias'];
+        $tenancyScaffoldEnabled = $tenancyRuntime['scaffold_enabled'];
+        $tenancyBlueprintRelative = $tenancyRuntime['scaffold_blueprint'];
+        $tenancyAutoDetect = $tenancyRuntime['auto_detect'];
+        $tenancyDrivers = $tenancyRuntime['drivers'];
+        $tenancyDetectedDriver = $tenancyRuntime['detected_driver'];
+        $tenancyDriverLabel = $tenancyRuntime['driver_label']
+            ?? ($tenancyDrivers[$tenancyDriver]['label'] ?? ucfirst($tenancyDriver));
+        $tenancyDetectedDriverLabel = $tenancyDetectedDriver !== null
+            ? ($tenancyDrivers[$tenancyDetectedDriver]['label'] ?? ucfirst($tenancyDetectedDriver))
+            : null;
 
         $formRequestsEnabled = array_key_exists('enabled', $formRequestFeature)
             ? (bool) $formRequestFeature['enabled']
@@ -230,6 +266,32 @@ SIGNATURE;
                 $this->renderValidationMessages($validation->warnings(), 'warning');
             }
 
+            $tenancyMode = $this->resolveBlueprintTenancyMode($blueprint);
+            $blueprintRequiresTenancyDriver = $this->blueprintRequiresTenancyDriver($tenancyMode);
+
+            if ($blueprintRequiresTenancyDriver) {
+                if (! $tenancyEnabled) {
+                    $this->renderTenancyFeatureDisabledWarning($relative, $tenancyMode);
+                } elseif ($tenancyDriver === 'none') {
+                    $this->renderTenancyDriverNotConfiguredWarning(
+                        $relative,
+                        $tenancyMode,
+                        $tenancyConfiguredDriver,
+                        $tenancyAutoDetect
+                    );
+                } elseif (! $tenancyDriverInstalled) {
+                    $this->renderTenancyDriverInstallReminder(
+                        $relative,
+                        $tenancyMode,
+                        $tenancyDriver,
+                        $tenancyDriverLabel,
+                        $tenancyDriverPackage,
+                        $tenancyInstallCommands,
+                        $tenancyGuideUrl
+                    );
+                }
+            }
+
             $pipelineOptions = [
                 'dry_run' => $dryRun,
                 'force' => $force,
@@ -257,6 +319,25 @@ SIGNATURE;
                     'authorize_by_default' => $authorizeByDefault,
                 ],
                 'auth_model_fields' => $authModelFields,
+                'tenancy' => [
+                    'enabled' => $tenancyEnabled,
+                    'configured_driver' => $tenancyConfiguredDriver,
+                    'driver' => $tenancyDriver,
+                    'driver_label' => $tenancyDriverLabel,
+                    'driver_installed' => $tenancyDriverInstalled,
+                    'driver_package' => $tenancyDriverPackage,
+                    'middleware_alias' => $tenancyMiddlewareAlias,
+                    'auto_detect' => $tenancyAutoDetect,
+                    'scaffold_enabled' => $tenancyScaffoldEnabled,
+                    'blueprint_path' => $tenancyBlueprintRelative,
+                    'install_commands' => $tenancyInstallCommands,
+                    'guide_url' => $tenancyGuideUrl,
+                    'drivers' => $tenancyDrivers,
+                    'detected_driver' => $tenancyDetectedDriver,
+                    'detected_driver_label' => $tenancyDetectedDriverLabel,
+                    'blueprint_mode' => $tenancyMode,
+                    'requires_driver' => $blueprintRequiresTenancyDriver,
+                ],
             ];
 
             if ($only !== null) {
@@ -379,29 +460,451 @@ SIGNATURE;
 
     private function isSanctumInstalled(): bool
     {
-        $path = base_path('composer.json');
+        return $this->isComposerPackageInstalled('laravel/sanctum');
+    }
 
-        if (! is_file($path)) {
-            return false;
+    /**
+     * @param array<string, mixed> $config
+     * @return array{
+     *     enabled:bool,
+     *     configured_driver:string,
+     *     driver:string,
+     *     driver_installed:bool,
+     *     driver_package:?string,
+     *     driver_label:string,
+     *     install_commands:array<int, string>,
+     *     guide_url:?string,
+     *     middleware_alias:string,
+     *     scaffold_enabled:bool,
+     *     scaffold_blueprint:string,
+     *     auto_detect:bool,
+     *     drivers:array<string, array{label:string,package:?string,install:array<int,string>,guide_url:?string}>,
+     *     detected_driver:?string
+     * }
+     */
+    private function resolveTenancyRuntime(array $config): array
+    {
+        $enabled = array_key_exists('enabled', $config) ? (bool) $config['enabled'] : true;
+        $autoDetect = array_key_exists('auto_detect', $config) ? (bool) $config['auto_detect'] : true;
+
+        $configuredDriver = isset($config['driver']) && is_string($config['driver'])
+            ? strtolower(trim($config['driver']))
+            : 'auto';
+
+        if ($configuredDriver === '') {
+            $configuredDriver = 'auto';
         }
 
-        $contents = file_get_contents($path);
+        $middlewareAlias = isset($config['middleware_alias']) && is_string($config['middleware_alias'])
+            ? trim($config['middleware_alias'])
+            : 'tenant';
 
-        if ($contents === false) {
-            return false;
+        if ($middlewareAlias === '') {
+            $middlewareAlias = 'tenant';
         }
 
-        $data = json_decode($contents, true);
+        $scaffoldConfig = isset($config['scaffold']) && is_array($config['scaffold'])
+            ? $config['scaffold']
+            : [];
 
-        if (! is_array($data)) {
-            return false;
+        $scaffoldEnabled = array_key_exists('enabled', $scaffoldConfig)
+            ? (bool) $scaffoldConfig['enabled']
+            : true;
+
+        $scaffoldBlueprint = isset($scaffoldConfig['blueprint_path']) && is_string($scaffoldConfig['blueprint_path'])
+            ? trim($scaffoldConfig['blueprint_path'])
+            : '';
+
+        if ($scaffoldBlueprint === '') {
+            $scaffoldBlueprint = 'central/tenancy/tenants.yaml';
         }
 
-        $require = $data['require'] ?? [];
-        $requireDev = $data['require-dev'] ?? [];
+        $driversConfig = isset($config['drivers']) && is_array($config['drivers'])
+            ? $config['drivers']
+            : [];
 
-        return (is_array($require) && array_key_exists('laravel/sanctum', $require))
-            || (is_array($requireDev) && array_key_exists('laravel/sanctum', $requireDev));
+        $drivers = [];
+
+        foreach ($driversConfig as $name => $driverConfig) {
+            if (! is_string($name) || $name === '') {
+                continue;
+            }
+
+            $key = strtolower($name);
+            $definition = is_array($driverConfig) ? $driverConfig : [];
+
+            $label = isset($definition['label']) && is_string($definition['label'])
+                ? trim($definition['label'])
+                : $name;
+
+            $package = isset($definition['package']) && is_string($definition['package'])
+                ? trim($definition['package'])
+                : null;
+
+            $installCommands = [];
+
+            if (isset($definition['install']) && is_array($definition['install'])) {
+                foreach ($definition['install'] as $command) {
+                    if (! is_string($command)) {
+                        continue;
+                    }
+
+                    $commandsNormalized = trim($command);
+
+                    if ($commandsNormalized !== '') {
+                        $installCommands[] = $commandsNormalized;
+                    }
+                }
+            }
+
+            $guideUrl = isset($definition['guide_url']) && is_string($definition['guide_url'])
+                ? trim($definition['guide_url'])
+                : null;
+
+            $drivers[$key] = [
+                'label' => $label,
+                'package' => $package !== '' ? $package : null,
+                'install' => $installCommands,
+                'guide_url' => $guideUrl !== '' ? $guideUrl : null,
+            ];
+        }
+
+        $detectedDriver = null;
+
+        if ($autoDetect) {
+            foreach ($drivers as $key => $driverDefinition) {
+                $package = $driverDefinition['package'] ?? null;
+
+                if ($package !== null && $package !== '' && $this->isComposerPackageInstalled($package)) {
+                    $detectedDriver = $key;
+
+                    break;
+                }
+            }
+        }
+
+        $resolvedDriver = $this->selectTenancyDriver($configuredDriver, $detectedDriver, $drivers);
+
+        $driverDefinition = $drivers[$resolvedDriver] ?? null;
+        $driverPackage = $driverDefinition['package'] ?? null;
+
+        $driverInstalled = $driverPackage !== null
+            ? $this->isComposerPackageInstalled($driverPackage)
+            : $resolvedDriver !== 'none';
+
+        $installCommands = $driverDefinition['install'] ?? [];
+        if ($installCommands === [] && $driverPackage !== null) {
+            $installCommands = [sprintf('composer require %s', $driverPackage)];
+        }
+
+        $guideUrl = $driverDefinition['guide_url'] ?? null;
+
+        return [
+            'enabled' => $enabled,
+            'configured_driver' => $configuredDriver,
+            'driver' => $resolvedDriver,
+            'driver_installed' => $driverInstalled,
+            'driver_package' => $driverPackage,
+            'driver_label' => $driverDefinition['label'] ?? ucfirst($resolvedDriver),
+            'install_commands' => $installCommands,
+            'guide_url' => $guideUrl,
+            'middleware_alias' => $middlewareAlias,
+            'scaffold_enabled' => $scaffoldEnabled,
+            'scaffold_blueprint' => $scaffoldBlueprint,
+            'auto_detect' => $autoDetect,
+            'drivers' => $drivers,
+            'detected_driver' => $detectedDriver,
+        ];
+    }
+
+    /**
+     * @param array<string, array{label:string,package:?string,install:array<int,string>,guide_url:?string}> $drivers
+     */
+    private function selectTenancyDriver(string $configuredDriver, ?string $detectedDriver, array $drivers): string
+    {
+        if ($configuredDriver === 'auto') {
+            return $detectedDriver ?? 'none';
+        }
+
+        if ($configuredDriver === 'detected') {
+            return $detectedDriver ?? 'none';
+        }
+
+        if ($configuredDriver === 'none') {
+            return 'none';
+        }
+
+        if ($configuredDriver === 'custom') {
+            return 'custom';
+        }
+
+        return array_key_exists($configuredDriver, $drivers)
+            ? $configuredDriver
+            : ($detectedDriver ?? $configuredDriver);
+    }
+
+    private function resolveBlueprintTenancyMode(Blueprint $blueprint): string
+    {
+        $tenancy = $blueprint->tenancy();
+
+        if (isset($tenancy['mode']) && is_string($tenancy['mode'])) {
+            $mode = strtolower(trim($tenancy['mode']));
+
+            if ($mode !== '') {
+                return $mode;
+            }
+        }
+
+        $module = $blueprint->module();
+
+        if (is_string($module) && $module !== '') {
+            $mode = $this->detectTenancyModeFromSegments(preg_split('#[\\/]+#', $module) ?: []);
+
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        $path = $blueprint->path();
+
+        if ($path !== '') {
+            $segments = array_filter(
+                preg_split('#[\\/]+#', $path) ?: [],
+                static fn ($segment) => is_string($segment) && $segment !== ''
+            );
+
+            $mode = $this->detectTenancyModeFromSegments($segments);
+
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        return 'central';
+    }
+
+    /**
+     * @param iterable<int, string> $segments
+     */
+    private function detectTenancyModeFromSegments(iterable $segments): ?string
+    {
+        foreach ($segments as $segment) {
+            if (! is_string($segment)) {
+                continue;
+            }
+
+            $candidate = strtolower(trim($segment));
+
+            if (in_array($candidate, ['central', 'tenant', 'shared'], true)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function blueprintRequiresTenancyDriver(string $mode): bool
+    {
+        return in_array($mode, ['tenant', 'shared'], true);
+    }
+
+    private function renderTenancyFeatureDisabledWarning(string $relative, string $mode): void
+    {
+        if ($this->tenancyFeatureDisabledWarning) {
+            return;
+        }
+
+        $this->tenancyFeatureDisabledWarning = true;
+
+        $this->warn(sprintf(
+            '  [tenancy] El blueprint "%s" está en modo "%s", pero la característica tenancy está deshabilitada en config/blueprintx.php.',
+            $relative,
+            $mode
+        ));
+
+        $this->line('    > Establece "features.tenancy.enabled" en true para habilitar la generación multi-tenant.');
+    }
+
+    private function renderTenancyDriverNotConfiguredWarning(string $relative, string $mode, string $configuredDriver, bool $autoDetect): void
+    {
+        $key = $configuredDriver . ':' . ($autoDetect ? 'auto' : 'manual');
+
+        if (isset($this->tenancyDriverConfigWarnings[$key])) {
+            return;
+        }
+
+        $this->tenancyDriverConfigWarnings[$key] = true;
+
+        if ($configuredDriver === 'none') {
+            $this->warn(sprintf(
+                '  [tenancy] El blueprint "%s" usa modo "%s" pero "features.tenancy.driver" está establecido en "none".',
+                $relative,
+                $mode
+            ));
+            $this->line('    > Define un driver válido, por ejemplo "stancl", en config/blueprintx.php.');
+
+            return;
+        }
+
+        if ($configuredDriver === 'auto') {
+            if ($autoDetect) {
+                $this->warn(sprintf(
+                    '  [tenancy] No se detectó ningún paquete tenancy instalado para el blueprint "%s" (modo "%s").',
+                    $relative,
+                    $mode
+                ));
+                $this->line('    > Instala un driver soportado (p. ej. stancl/tenancy) o configura "features.tenancy.driver" manualmente.');
+            } else {
+                $this->warn(sprintf(
+                    '  [tenancy] La autodetección está deshabilitada y no se configuró un driver para el blueprint "%s" (modo "%s").',
+                    $relative,
+                    $mode
+                ));
+                $this->line('    > Activa "features.tenancy.auto_detect" o asigna un driver en "features.tenancy.driver".');
+            }
+
+            return;
+        }
+
+        $this->warn(sprintf(
+            '  [tenancy] El driver configurado "%s" no está disponible para el blueprint "%s" (modo "%s").',
+            $configuredDriver,
+            $relative,
+            $mode
+        ));
+        $this->line('    > Verifica que el driver esté instalado o ajusta "features.tenancy.driver".');
+    }
+
+    /**
+     * @param array<int, string> $installCommands
+     */
+    private function renderTenancyDriverInstallReminder(
+        string $relative,
+        string $mode,
+        string $driverKey,
+        string $driverLabel,
+        ?string $package,
+        array $installCommands,
+        ?string $guideUrl
+    ): void {
+        if (isset($this->tenancyMissingDriverWarnings[$driverKey])) {
+            return;
+        }
+
+        $this->tenancyMissingDriverWarnings[$driverKey] = true;
+
+        $this->warn(sprintf(
+            '  [tenancy] El blueprint "%s" (modo "%s") usa el driver "%s", pero no se detectó el paquete requerido.',
+            $relative,
+            $mode,
+            $driverLabel
+        ));
+
+        if ($package !== null) {
+            $this->line(sprintf('    > Paquete esperado: %s', $package));
+        }
+
+        foreach ($installCommands as $command) {
+            $this->line(sprintf('    $ %s', $command));
+        }
+
+        if ($guideUrl !== null && $guideUrl !== '') {
+            $this->line(sprintf('    Guía: %s', $guideUrl));
+        }
+    }
+
+    private function isComposerPackageInstalled(string $package): bool
+    {
+        $manifest = $this->composerManifest();
+
+        if (isset($manifest['require'][$package]) || isset($manifest['require-dev'][$package])) {
+            return true;
+        }
+
+        if (isset($manifest['packages'][$package]) || isset($manifest['packages-dev'][$package])) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array{
+     *     require: array<string, string>,
+     *     'require-dev': array<string, string>,
+     *     packages: array<string, array<string, mixed>>,
+     *     'packages-dev': array<string, array<string, mixed>>
+     * }
+     */
+    private function composerManifest(): array
+    {
+        if ($this->composerConfig !== null) {
+            return $this->composerConfig;
+        }
+
+        $manifest = [
+            'require' => [],
+            'require-dev' => [],
+            'packages' => [],
+            'packages-dev' => [],
+        ];
+
+        $basePath = function_exists('base_path') ? base_path() : getcwd();
+
+        if (is_string($basePath) && $basePath !== '') {
+            $jsonPath = $basePath . DIRECTORY_SEPARATOR . 'composer.json';
+
+            if (is_file($jsonPath)) {
+                $contents = file_get_contents($jsonPath);
+
+                if ($contents !== false) {
+                    $data = json_decode($contents, true);
+
+                    if (is_array($data)) {
+                        $require = $data['require'] ?? [];
+                        $requireDev = $data['require-dev'] ?? [];
+
+                        if (is_array($require)) {
+                            $manifest['require'] = array_filter($require, static fn ($value, $key): bool => is_string($key), ARRAY_FILTER_USE_BOTH);
+                        }
+
+                        if (is_array($requireDev)) {
+                            $manifest['require-dev'] = array_filter($requireDev, static fn ($value, $key): bool => is_string($key), ARRAY_FILTER_USE_BOTH);
+                        }
+                    }
+                }
+            }
+
+            $lockPath = $basePath . DIRECTORY_SEPARATOR . 'composer.lock';
+
+            if (is_file($lockPath)) {
+                $contents = file_get_contents($lockPath);
+
+                if ($contents !== false) {
+                    $data = json_decode($contents, true);
+
+                    if (is_array($data)) {
+                        foreach (['packages', 'packages-dev'] as $section) {
+                            if (! isset($data[$section]) || ! is_array($data[$section])) {
+                                continue;
+                            }
+
+                            foreach ($data[$section] as $package) {
+                                if (! is_array($package) || ! isset($package['name']) || ! is_string($package['name'])) {
+                                    continue;
+                                }
+
+                                $manifest[$section][$package['name']] = $package;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        $this->composerConfig = $manifest;
+
+        return $this->composerConfig;
     }
 
     private function normalizeNullableString(mixed $value): ?string
