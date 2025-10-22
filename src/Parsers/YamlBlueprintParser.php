@@ -96,22 +96,7 @@ class YamlBlueprintParser implements BlueprintParser
      */
     private function normalize(array $data, string $fullPath): array
     {
-        $moduleValue = Arr::get($data, 'module');
-        $module = null;
-
-        if (is_string($moduleValue)) {
-            $moduleValue = trim($moduleValue);
-
-            if ($moduleValue !== '') {
-                $module = $moduleValue;
-            }
-        }
-
-        if ($module === null) {
-            $module = $this->detectModule($fullPath);
-        }
-
-        $module = $this->normalizeModule($module, $fullPath);
+        $module = $this->resolveModule($data, $fullPath, $this->detectModule($fullPath));
 
         $entity = Arr::get($data, 'entity');
         if (! is_string($entity) || $entity === '') {
@@ -330,6 +315,67 @@ class YamlBlueprintParser implements BlueprintParser
     }
 
     /**
+     * @param array<string, mixed> $data
+     */
+    private function resolveModule(array $data, string $fullPath, ?string $detected): ?string
+    {
+        if (array_key_exists('module', $data)) {
+            $raw = $data['module'];
+
+            if ($raw === null) {
+                return null;
+            }
+
+            if (! is_string($raw)) {
+                throw new BlueprintParseException(sprintf('La clave "module" del blueprint "%s" debe ser una cadena.', $fullPath));
+            }
+
+            return $this->sanitizeModule($raw, $fullPath);
+        }
+
+        return $this->sanitizeModule($detected, $fullPath);
+    }
+
+    private function sanitizeModule(?string $value, string $fullPath): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (! is_string($value)) {
+            throw new BlueprintParseException(sprintf('La clave "module" del blueprint "%s" debe ser una cadena.', $fullPath));
+        }
+
+        $trimmed = trim($value);
+
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $normalized = str_replace('\\', '/', $trimmed);
+        $normalized = preg_replace('~/+~', '/', $normalized);
+
+        if (! is_string($normalized)) {
+            $normalized = $trimmed;
+        }
+
+        $segments = array_map(static fn (string $segment): string => trim($segment), explode('/', $normalized));
+        $segments = array_values(array_filter($segments, static fn (string $segment): bool => $segment !== ''));
+
+        if ($segments === []) {
+            return null;
+        }
+
+        foreach ($segments as $segment) {
+            if (! preg_match('/^[A-Za-z0-9_]+$/', $segment)) {
+                throw new BlueprintParseException(sprintf('El blueprint "%s" declara un módulo inválido "%s".', $fullPath, $value));
+            }
+        }
+
+        return implode('/', $segments);
+    }
+
+    /**
      * @param mixed $value
      * @return array<int, array<string, mixed>>
      */
@@ -476,41 +522,6 @@ class YamlBlueprintParser implements BlueprintParser
         }
 
         return $result;
-    }
-
-    private function normalizeModule(?string $module, string $fullPath): ?string
-    {
-        if ($module === null) {
-            return null;
-        }
-
-        $normalized = trim(str_replace('\\', '/', $module));
-
-        if ($normalized === '') {
-            return null;
-        }
-
-        $segments = array_filter(explode('/', $normalized), static fn (string $segment): bool => $segment !== '');
-
-        if ($segments === []) {
-            return null;
-        }
-
-        $validated = [];
-
-        foreach ($segments as $segment) {
-            if (! preg_match('/^[A-Za-z0-9_\-]+$/', $segment)) {
-                throw new BlueprintParseException(sprintf(
-                    'El blueprint "%s" define un módulo inválido "%s". Los nombres de módulo solo pueden contener letras, números, guiones y guiones bajos.',
-                    $fullPath,
-                    $module
-                ));
-            }
-
-            $validated[] = strtolower($segment);
-        }
-
-        return implode('/', $validated);
     }
 
     private function detectModule(string $fullPath): ?string

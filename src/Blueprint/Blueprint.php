@@ -103,16 +103,11 @@ class Blueprint
             return [];
         }
 
-        $normalized = trim(str_replace('\\', '/', $this->module), '/');
+        $normalized = str_replace('\\', '/', $this->module);
+        $parts = array_map(static fn (string $segment): string => trim($segment), explode('/', $normalized));
+        $parts = array_values(array_filter($parts, static fn (string $segment): bool => $segment !== ''));
 
-        if ($normalized === '') {
-            return [];
-        }
-
-        return array_values(array_filter(
-            explode('/', $normalized),
-            static fn (string $segment): bool => $segment !== ''
-        ));
+        return $parts;
     }
 
     /**
@@ -123,18 +118,18 @@ class Blueprint
         return array_map(static fn (string $segment): string => Str::studly($segment), $this->moduleSegments());
     }
 
-    public function modulePath(): ?string
-    {
-        $segments = $this->moduleStudlySegments();
-
-        return $segments === [] ? null : implode('/', $segments);
-    }
-
     public function moduleNamespace(): ?string
     {
         $segments = $this->moduleStudlySegments();
 
         return $segments === [] ? null : implode('\\', $segments);
+    }
+
+    public function modulePath(): ?string
+    {
+        $segments = $this->moduleStudlySegments();
+
+        return $segments === [] ? null : implode('/', $segments);
     }
 
     public function moduleClassPrefix(): ?string

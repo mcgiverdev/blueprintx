@@ -115,10 +115,10 @@ class TestsLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = $options['namespaces']['tests'] ?? 'Tests\\Feature';
-        $module = $blueprint->module();
+        $moduleNamespace = $blueprint->moduleNamespace();
 
-        if ($module !== null && $module !== '') {
-            $base .= '\\' . Str::studly($module);
+        if ($moduleNamespace !== null) {
+            $base .= '\\' . $moduleNamespace;
         }
 
         return [
@@ -132,10 +132,10 @@ class TestsLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = $options['paths']['tests'] ?? 'tests/Feature';
-        $module = $blueprint->module();
+        $modulePath = $blueprint->modulePath();
 
-        if ($module !== null && $module !== '') {
-            $basePath .= '/' . Str::studly($module);
+        if ($modulePath !== null) {
+            $basePath .= '/' . $modulePath;
         }
 
         $entityName = Str::studly($blueprint->entity());
@@ -155,12 +155,14 @@ class TestsLayerGenerator implements LayerGenerator
 
     private function resolveModelClass(Blueprint $blueprint): string
     {
-        $module = $blueprint->module();
-        $moduleNamespace = $module !== null && $module !== ''
-            ? Str::studly($module) . '\\'
-            : '';
+        $moduleNamespace = $blueprint->moduleNamespace();
 
-        return sprintf('App\\Domain\\%sModels\\%s', $moduleNamespace, Str::studly($blueprint->entity()));
+        $domainNamespace = 'App\\Domain';
+        if ($moduleNamespace !== null) {
+            $domainNamespace .= '\\' . $moduleNamespace;
+        }
+
+        return sprintf('%s\\Models\\%s', $domainNamespace, Str::studly($blueprint->entity()));
     }
 
     private function deriveModelContext(Blueprint $blueprint): array
@@ -217,10 +219,8 @@ class TestsLayerGenerator implements LayerGenerator
      */
     private function prepareRelations(Blueprint $blueprint): array
     {
-        $module = $blueprint->module();
-        $moduleNamespace = $module !== null && $module !== ''
-            ? Str::studly($module) . '\\'
-            : '';
+        $moduleNamespace = $blueprint->moduleNamespace();
+        $moduleNamespacePrefix = $moduleNamespace !== null ? $moduleNamespace . '\\' : '';
 
         $relations = [];
         $existingRelationFields = [];
@@ -233,7 +233,11 @@ class TestsLayerGenerator implements LayerGenerator
             $field = $relation->field;
             $variable = $this->relationVariableFromField($field, $relation->target);
             $targetStudly = Str::studly($relation->target);
-            $class = sprintf('App\\Domain\\%sModels\\%s', $moduleNamespace, $targetStudly);
+            $class = sprintf(
+                'App\\Domain\\%sModels\\%s',
+                $moduleNamespacePrefix,
+                $targetStudly
+            );
 
             $relations[] = [
                 'name' => $relation->target,
@@ -247,7 +251,7 @@ class TestsLayerGenerator implements LayerGenerator
             $existingRelationFields[] = $field;
         }
 
-        $implicitRelations = $this->inferImplicitBelongsToRelations($blueprint, $existingRelationFields, $moduleNamespace);
+    $implicitRelations = $this->inferImplicitBelongsToRelations($blueprint, $existingRelationFields, $moduleNamespacePrefix);
 
         return array_merge($relations, $implicitRelations);
     }

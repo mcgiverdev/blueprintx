@@ -117,7 +117,7 @@ class DomainLayerGenerator implements LayerGenerator
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $this->moduleSegment($blueprint),
+            'module' => $blueprint->moduleNamespace(),
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'model' => $this->deriveModelContext($blueprint, $namespaces),
@@ -139,11 +139,11 @@ class DomainLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $moduleNamespace = $blueprint->moduleNamespace();
+        $module = $blueprint->moduleNamespace();
         $domainRoot = $base;
 
-        if ($moduleNamespace !== null) {
-            $domainRoot .= '\\' . $moduleNamespace;
+        if ($module !== null) {
+            $domainRoot .= '\\' . $module;
         }
 
         $sharedBase = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
@@ -165,13 +165,13 @@ class DomainLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
-        $modulePath = $this->moduleSegment($blueprint);
+        $module = $blueprint->modulePath();
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
 
-        if ($modulePath !== null) {
-            $root .= '/' . $modulePath;
+        if ($module !== null) {
+            $root .= '/' . $module;
         }
 
         $sharedRootPath = sprintf('%s/Shared/Exceptions', $basePath);
@@ -185,11 +185,6 @@ class DomainLayerGenerator implements LayerGenerator
             'shared_domain_conflict_exception' => sprintf('%s/DomainConflictException.php', $sharedRootPath),
             'shared_domain_validation_exception' => sprintf('%s/DomainValidationException.php', $sharedRootPath),
         ];
-    }
-
-    private function moduleSegment(Blueprint $blueprint): ?string
-    {
-        return $blueprint->modulePath();
     }
 
     private function namingContext(Blueprint $blueprint): array
