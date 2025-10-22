@@ -2,6 +2,8 @@
 
 namespace BlueprintX\Blueprint;
 
+use Illuminate\Support\Str;
+
 class Blueprint
 {
     /**
@@ -90,6 +92,56 @@ class Blueprint
     public function module(): ?string
     {
         return $this->module;
+    }
+
+    /**
+     * @return string[]
+     */
+    public function moduleSegments(): array
+    {
+        if ($this->module === null || $this->module === '') {
+            return [];
+        }
+
+        $normalized = trim(str_replace('\\', '/', $this->module), '/');
+
+        if ($normalized === '') {
+            return [];
+        }
+
+        return array_values(array_filter(
+            explode('/', $normalized),
+            static fn (string $segment): bool => $segment !== ''
+        ));
+    }
+
+    /**
+     * @return string[]
+     */
+    public function moduleStudlySegments(): array
+    {
+        return array_map(static fn (string $segment): string => Str::studly($segment), $this->moduleSegments());
+    }
+
+    public function modulePath(): ?string
+    {
+        $segments = $this->moduleStudlySegments();
+
+        return $segments === [] ? null : implode('/', $segments);
+    }
+
+    public function moduleNamespace(): ?string
+    {
+        $segments = $this->moduleStudlySegments();
+
+        return $segments === [] ? null : implode('\\', $segments);
+    }
+
+    public function moduleClassPrefix(): ?string
+    {
+        $segments = $this->moduleStudlySegments();
+
+        return $segments === [] ? null : implode('', $segments);
     }
 
     public function entity(): string

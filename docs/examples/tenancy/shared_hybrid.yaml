@@ -1,0 +1,42 @@
+entity: AuditEvent
+module: shared/audit
+table: audit_events
+architecture: hexagonal
+fields:
+  - name: id
+    type: uuid
+  - name: tenant_id
+    type: uuid
+  - name: actor_id
+    type: uuid
+  - name: action
+    type: string
+  - name: logged_at
+    type: datetime
+relations:
+  - type: belongsTo
+    target: Tenant
+    field: tenant_id
+options:
+  timestamps: false
+  softDeletes: false
+api:
+  base_path: /shared/audit/events
+  middleware:
+    - auth:sanctum
+  endpoints:
+    - type: crud
+    - type: stats
+      by: tenant_id
+docs:
+  description: Eventos de auditoría visibles por equipo central y tenants
+errors: {}
+metadata:
+  owner: Compliance
+  retention: 365d
+tenancy:
+  mode: shared
+  storage: both
+  connection: audit
+  routing_scope: both
+  seed_scope: both

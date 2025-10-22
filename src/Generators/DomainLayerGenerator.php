@@ -139,11 +139,11 @@ class DomainLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $this->moduleSegment($blueprint);
+        $moduleNamespace = $blueprint->moduleNamespace();
         $domainRoot = $base;
 
-        if ($module !== null) {
-            $domainRoot .= '\\' . $module;
+        if ($moduleNamespace !== null) {
+            $domainRoot .= '\\' . $moduleNamespace;
         }
 
         $sharedBase = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
@@ -165,13 +165,13 @@ class DomainLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
-        $module = $this->moduleSegment($blueprint);
+        $modulePath = $this->moduleSegment($blueprint);
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
 
-        if ($module !== null) {
-            $root .= '/' . $module;
+        if ($modulePath !== null) {
+            $root .= '/' . $modulePath;
         }
 
         $sharedRootPath = sprintf('%s/Shared/Exceptions', $basePath);
@@ -189,13 +189,7 @@ class DomainLayerGenerator implements LayerGenerator
 
     private function moduleSegment(Blueprint $blueprint): ?string
     {
-        $module = $blueprint->module();
-
-        if ($module === null || $module === '') {
-            return null;
-        }
-
-        return Str::studly($module);
+        return $blueprint->modulePath();
     }
 
     private function namingContext(Blueprint $blueprint): array

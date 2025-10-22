@@ -96,7 +96,22 @@ class YamlBlueprintParser implements BlueprintParser
      */
     private function normalize(array $data, string $fullPath): array
     {
-        $module = $this->detectModule($fullPath);
+        $moduleValue = Arr::get($data, 'module');
+        $module = null;
+
+        if (is_string($moduleValue)) {
+            $moduleValue = trim($moduleValue);
+
+            if ($moduleValue !== '') {
+                $module = $moduleValue;
+            }
+        }
+
+        if ($module === null) {
+            $module = $this->detectModule($fullPath);
+        }
+
+        $module = $this->normalizeModule($module, $fullPath);
 
         $entity = Arr::get($data, 'entity');
         if (! is_string($entity) || $entity === '') {
@@ -461,6 +476,41 @@ class YamlBlueprintParser implements BlueprintParser
         }
 
         return $result;
+    }
+
+    private function normalizeModule(?string $module, string $fullPath): ?string
+    {
+        if ($module === null) {
+            return null;
+        }
+
+        $normalized = trim(str_replace('\\', '/', $module));
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        $segments = array_filter(explode('/', $normalized), static fn (string $segment): bool => $segment !== '');
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $validated = [];
+
+        foreach ($segments as $segment) {
+            if (! preg_match('/^[A-Za-z0-9_\-]+$/', $segment)) {
+                throw new BlueprintParseException(sprintf(
+                    'El blueprint "%s" define un módulo inválido "%s". Los nombres de módulo solo pueden contener letras, números, guiones y guiones bajos.',
+                    $fullPath,
+                    $module
+                ));
+            }
+
+            $validated[] = strtolower($segment);
+        }
+
+        return implode('/', $validated);
     }
 
     private function detectModule(string $fullPath): ?string

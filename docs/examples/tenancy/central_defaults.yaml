@@ -1,0 +1,24 @@
+entity: Employee
+module: hr
+table: employees
+architecture: hexagonal
+fields:
+  - name: id
+    type: uuid
+  - name: first_name
+    type: string
+  - name: last_name
+    type: string
+relations: []
+options:
+  timestamps: true
+  softDeletes: false
+api:
+  base_path: /hr/employees
+  middleware: []
+  endpoints:
+    - type: crud
+docs: {}
+errors: {}
+metadata:
+  owner: HR Core Team

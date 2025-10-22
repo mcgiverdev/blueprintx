@@ -1,0 +1,42 @@
+entity: Subscription
+module: tenant/billing
+table: subscriptions
+architecture: hexagonal
+fields:
+  - name: id
+    type: uuid
+  - name: tenant_id
+    type: uuid
+  - name: plan
+    type: string
+  - name: status
+    type: string
+relations:
+  - type: belongsTo
+    target: Tenant
+    field: tenant_id
+options:
+  timestamps: true
+  audited: true
+api:
+  base_path: /tenant/billing/subscriptions
+  middleware:
+    - tenancy
+  endpoints:
+    - type: crud
+    - type: search
+      fields:
+        - plan
+        - status
+docs:
+  tags:
+    - billing
+errors: {}
+metadata:
+  owner: Billing Squad
+tenancy:
+  mode: tenant
+  storage: tenant
+  connection: tenant
+  routing_scope: tenant
+  seed_scope: tenant
