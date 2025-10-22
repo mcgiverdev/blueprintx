@@ -159,6 +159,13 @@ final class GenerationHistoryManager
                 return $rightTime <=> $leftTime;
             }
 
+            $leftMTime = isset($left['path']) && is_string($left['path']) ? @filemtime($left['path']) : false;
+            $rightMTime = isset($right['path']) && is_string($right['path']) ? @filemtime($right['path']) : false;
+
+            if ($leftMTime !== false && $rightMTime !== false && $leftMTime !== $rightMTime) {
+                return $rightMTime <=> $leftMTime;
+            }
+
             return strcmp($right['id'], $left['id']);
         });
 

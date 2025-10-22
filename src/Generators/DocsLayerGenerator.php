@@ -95,10 +95,10 @@ class DocsLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = $options['paths']['docs'] ?? 'docs';
-        $module = $blueprint->module();
+        $modulePath = $this->modulePath($blueprint);
 
-        if ($module !== null && $module !== '') {
-            $basePath .= '/' . Str::studly($module);
+        if ($modulePath !== null) {
+            $basePath .= '/' . $modulePath;
         }
 
         $entityName = Str::studly($blueprint->entity());
@@ -173,5 +173,25 @@ class DocsLayerGenerator implements LayerGenerator
             static fn (array $error): string => sprintf('%s: %s', $error['property'], $error['message']),
             $validator->getErrors()
         );
+    }
+
+    private function modulePath(Blueprint $blueprint): ?string
+    {
+        $module = $blueprint->module();
+
+        if ($module === null || $module === '') {
+            return null;
+        }
+
+        $normalized = str_replace('\\', '/', $module);
+        $segments = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $part): string => Str::studly($part), $segments);
+
+        return str_replace('\\', '/', implode('\\', $studlySegments));
     }
 }

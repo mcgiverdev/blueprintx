@@ -1,0 +1,28 @@
+{#
+  Stub: Trait to mark Eloquent models as tenant-aware.
+  Variables:
+    - tenancy.trait_namespace
+    - tenancy.foreign_key
+#}
+<?php
+
+namespace {{ tenancy.trait_namespace|default('App\\Domain\\Shared\\Concerns') }};
+
+trait TenantAwareEntity
+{
+    /**
+     * Nombre de la columna que referencia al tenant.
+     */
+    protected string $tenantKeyName = '{{ tenancy.foreign_key|default('tenant_id') }}';
+
+    protected function initializeTenantAwareEntity(): void
+    {
+        if (! property_exists($this, 'fillable') || ! is_array($this->fillable)) {
+            return;
+        }
+
+        if (! in_array($this->tenantKeyName, $this->fillable, true)) {
+            $this->fillable[] = $this->tenantKeyName;
+        }
+    }
+}

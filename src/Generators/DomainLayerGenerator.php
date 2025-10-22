@@ -239,7 +239,7 @@ class DomainLayerGenerator implements LayerGenerator
         $root = $basePath;
 
         if ($module !== null) {
-            $root .= '/' . $module;
+            $root .= '/' . str_replace('\\', '/', $module);
         }
 
         $sharedRootPath = sprintf('%s/Shared/Exceptions', $basePath);
@@ -265,7 +265,16 @@ class DomainLayerGenerator implements LayerGenerator
             return null;
         }
 
-        return Str::studly($module);
+        $normalized = str_replace('\\', '/', $module);
+        $segments = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $part): string => Str::studly($part), $segments);
+
+        return implode('\\', $studlySegments);
     }
 
     private function namingContext(Blueprint $blueprint): array

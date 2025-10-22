@@ -232,11 +232,12 @@ class ApiLayerGenerator implements LayerGenerator
     {
         $basePath = rtrim($options['paths']['api'] ?? 'app/Http/Controllers/Api', '/');
         $module = $this->moduleSegment($blueprint);
+        $modulePath = $module !== null ? str_replace('\\', '/', $module) : null;
 
         $root = $basePath;
 
-        if ($module !== null) {
-            $root .= '/' . $module;
+        if ($modulePath !== null) {
+            $root .= '/' . $modulePath;
         }
 
         $entityName = Str::studly($blueprint->entity());
@@ -283,7 +284,16 @@ class ApiLayerGenerator implements LayerGenerator
             return null;
         }
 
-        return Str::studly($module);
+        $normalized = str_replace('\\', '/', $module);
+        $segments = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $part): string => Str::studly($part), $segments);
+
+        return implode('\\', $studlySegments);
     }
 
     private function deriveModelContext(Blueprint $blueprint): array

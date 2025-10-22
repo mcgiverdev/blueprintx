@@ -119,12 +119,13 @@ class InfrastructureLayerGenerator implements LayerGenerator
     {
         $basePath = rtrim($options['paths']['infrastructure'] ?? 'app/Infrastructure/Persistence/Eloquent', '/');
         $module = $this->moduleSegment($blueprint);
+        $modulePath = $module !== null ? str_replace('\\', '/', $module) : null;
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
 
-        if ($module !== null) {
-            $root .= '/' . $module;
+        if ($modulePath !== null) {
+            $root .= '/' . $modulePath;
         }
 
         return [
@@ -189,7 +190,16 @@ class InfrastructureLayerGenerator implements LayerGenerator
             return null;
         }
 
-        return Str::studly($module);
+        $normalized = str_replace('\\', '/', $module);
+        $segments = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $part): string => Str::studly($part), $segments);
+
+        return implode('\\', $studlySegments);
     }
 
     private function deriveModelContext(Blueprint $blueprint, array $domainNamespaces): array

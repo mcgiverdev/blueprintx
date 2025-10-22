@@ -33,7 +33,7 @@ SIGNATURE;
         $requestedRun = $this->normalizeNullableString($this->argument('run'));
         $requestedExecution = $this->normalizeNullableString($this->option('execution'));
 
-        $targetRuns = $this->resolveTargetRuns($requestedRun, $requestedExecution);
+    $targetRuns = $this->resolveTargetRuns($requestedRun, $requestedExecution);
 
         if ($targetRuns === []) {
             if ($requestedRun !== null) {

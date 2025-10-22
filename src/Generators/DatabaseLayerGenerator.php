@@ -188,6 +188,7 @@ class DatabaseLayerGenerator implements LayerGenerator
     {
         $entity = Str::studly($blueprint->entity());
         $module = $this->moduleSegment($blueprint);
+        $modulePath = $module !== null ? str_replace('\\', '/', $module) : null;
 
         $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
         $factoriesRoot = rtrim($options['paths']['database']['factories'] ?? 'database/factories/Domain', '/');
@@ -196,20 +197,20 @@ class DatabaseLayerGenerator implements LayerGenerator
         $migrationFilename = sprintf('%s_create_%s_table.php', $this->migrationPrefix($blueprint, $options), $this->tableName($blueprint));
 
         $factoryPath = $factoriesRoot;
-        if ($module !== null) {
-            $factoryPath .= '/' . $module;
+        if ($modulePath !== null) {
+            $factoryPath .= '/' . $modulePath;
         }
         $factoryPath .= '/Models/' . $entity . 'Factory.php';
 
         $seederPath = $seedersRoot;
-        if ($module !== null) {
-            $seederPath .= '/' . $module;
+        if ($modulePath !== null) {
+            $seederPath .= '/' . $modulePath;
         }
         $seederPath .= '/' . $entity . 'Seeder.php';
 
         $moduleSeederPath = null;
-        if ($module !== null) {
-            $moduleSeederPath = $seedersRoot . '/' . $module . 'Seeder.php';
+        if ($modulePath !== null) {
+            $moduleSeederPath = $seedersRoot . '/' . $modulePath . 'Seeder.php';
         }
 
         return [
@@ -2568,7 +2569,16 @@ class DatabaseLayerGenerator implements LayerGenerator
             return null;
         }
 
-        return Str::studly($module);
+        $normalized = str_replace('\\', '/', $module);
+        $segments = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $part): string => Str::studly($part), $segments);
+
+        return implode('\\', $studlySegments);
     }
 }
 
