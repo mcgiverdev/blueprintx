@@ -113,6 +113,17 @@ Estado general: **Pendiente**
 4. ☑ Completado - 2025-10-21: Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` (`Impacto esperado en comandos`).
 5. ⧗ Pendiente: Entrevistar a usuarios actuales (1-2 proyectos) para validar requerimientos de tenancy y priorizar entregables.
 
+#### Plan de entrevistas
+
+| Proyecto / equipo | Contexto tenancy | Objetivo de la sesión | Responsable | Estado |
+| --- | --- | --- | --- | --- |
+| Proyecto A (Core Banking) | Usa `stancl/tenancy` con múltiples bases de datos | Validar necesidades de migraciones tenant-aware y políticas de rollback | @infra-lead | ⧗ Pendiente (coordinar agenda semana 43) |
+| Proyecto B (SaaS RH) | Convivencia central + tenant en misma base | Alinear expectativas de pruebas y duplicación de snapshots | @qa-lead | ⧗ Pendiente (enviar invitación 2025-10-22) |
+
+- Preparar guion con temas: configuración actual, pain points, expectativas de generación de código, pruebas y documentación.
+- Registrar resultados y decisiones en sección nueva “Hallazgos de entrevistas” dentro de este documento.
+- Ajustar roadmap de fases posteriores según aprendizajes.
+
 ### Historias de usuario preliminares
 
 
