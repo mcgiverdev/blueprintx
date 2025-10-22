@@ -187,7 +187,7 @@ class DatabaseLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $entity = Str::studly($blueprint->entity());
-        $module = $this->modulePathSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
 
         $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
         $factoriesRoot = rtrim($options['paths']['database']['factories'] ?? 'database/factories/Domain', '/');
@@ -226,7 +226,7 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
-        $module = $this->moduleNamespaceSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $baseFactories = trim($options['namespaces']['database']['factories'] ?? 'Database\\Factories\\Domain', '\\');
         $factories = $baseFactories;
         $baseSeeders = trim($options['namespaces']['database']['seeders'] ?? 'Database\\Seeders', '\\');
@@ -1222,7 +1222,7 @@ class DatabaseLayerGenerator implements LayerGenerator
     private function buildFactoryContext(Blueprint $blueprint, array $namespaces, array $relationsByField): array
     {
         $entity = Str::studly($blueprint->entity());
-        $moduleNamespace = $this->moduleNamespaceSegment($blueprint);
+        $moduleNamespace = $this->moduleSegment($blueprint);
 
         $modelNamespace = trim('App\\Domain', '\\');
         if ($moduleNamespace !== null) {
@@ -1342,7 +1342,7 @@ class DatabaseLayerGenerator implements LayerGenerator
     private function modelFqcn(Blueprint $blueprint): string
     {
         $entity = Str::studly($blueprint->entity());
-        $moduleNamespace = $this->moduleNamespaceSegment($blueprint);
+        $moduleNamespace = $this->moduleSegment($blueprint);
 
         $namespace = 'App\\Domain';
         if ($moduleNamespace !== null) {
@@ -1354,7 +1354,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function modelNamespaceForRelation(Blueprint $blueprint, string $target): string
     {
-        $module = $this->moduleNamespaceSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $namespace = 'App\\Domain';
 
         if ($module !== null) {
@@ -2562,56 +2562,13 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function moduleSegment(Blueprint $blueprint): ?string
     {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('', $segments);
-    }
-
-    private function moduleNamespaceSegment(Blueprint $blueprint): ?string
-    {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('\\', $segments);
-    }
-
-    private function modulePathSegment(Blueprint $blueprint): ?string
-    {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('/', $segments);
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function normalizedModuleSegments(Blueprint $blueprint): array
-    {
         $module = $blueprint->module();
 
-        if (! is_string($module) || $module === '') {
-            return [];
+        if ($module === null || $module === '') {
+            return null;
         }
 
-        $normalized = str_replace('\\', '/', $module);
-        $parts = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
-
-        if ($parts === []) {
-            return [];
-        }
-
-        return array_map(static fn (string $part): string => Str::studly($part), $parts);
+        return Str::studly($module);
     }
 }
 

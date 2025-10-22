@@ -89,7 +89,7 @@ class Blueprint
 
     public function module(): ?string
     {
-        return $this->module;
+        return str_replace('/', '\\', $this->module);
     }
 
     public function entity(): string

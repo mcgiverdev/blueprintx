@@ -139,7 +139,7 @@ class DomainLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $this->moduleNamespaceSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $domainRoot = $base;
 
         if ($module !== null) {
@@ -165,7 +165,7 @@ class DomainLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
-        $module = $this->modulePathSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
@@ -189,56 +189,13 @@ class DomainLayerGenerator implements LayerGenerator
 
     private function moduleSegment(Blueprint $blueprint): ?string
     {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('', $segments);
-    }
-
-    private function moduleNamespaceSegment(Blueprint $blueprint): ?string
-    {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('\\', $segments);
-    }
-
-    private function modulePathSegment(Blueprint $blueprint): ?string
-    {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('/', $segments);
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function normalizedModuleSegments(Blueprint $blueprint): array
-    {
         $module = $blueprint->module();
 
-        if (! is_string($module) || $module === '') {
-            return [];
+        if ($module === null || $module === '') {
+            return null;
         }
 
-        $normalized = str_replace('\\', '/', $module);
-        $parts = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
-
-        if ($parts === []) {
-            return [];
-        }
-
-        return array_map(static fn (string $part): string => Str::studly($part), $parts);
+        return Str::studly($module);
     }
 
     private function namingContext(Blueprint $blueprint): array
