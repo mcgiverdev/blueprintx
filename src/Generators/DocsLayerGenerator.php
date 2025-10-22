@@ -9,16 +9,19 @@ use BlueprintX\Docs\OpenApiDocumentBuilder;
 use BlueprintX\Docs\OpenApi31;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
+use BlueprintX\Support\Concerns\InteractsWithModules;
+use Illuminate\Support\Str;
 use JsonException;
 use JsonSchema\Constraints\Constraint;
 use JsonSchema\Validator;
-use Illuminate\Support\Str;
 use Symfony\Component\Yaml\Yaml;
 use Throwable;
 use cebe\openapi\Reader;
 
 class DocsLayerGenerator implements LayerGenerator
 {
+    use InteractsWithModules;
+
     private ?string $schemaPath;
     private string $validationMode;
 
@@ -95,10 +98,10 @@ class DocsLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = $options['paths']['docs'] ?? 'docs';
-        $module = $blueprint->module();
+        $module = $this->modulePath($blueprint);
 
-        if ($module !== null && $module !== '') {
-            $basePath .= '/' . Str::studly($module);
+        if ($module !== null) {
+            $basePath .= '/' . $module;
         }
 
         $entityName = Str::studly($blueprint->entity());

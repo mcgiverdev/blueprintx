@@ -11,10 +11,13 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
+use BlueprintX\Support\Concerns\InteractsWithModules;
 use Illuminate\Support\Str;
 
 class ApiLayerGenerator implements LayerGenerator
 {
+    use InteractsWithModules;
+
     private array $formRequestConfig;
 
     private array $resourceConfig;
@@ -158,7 +161,10 @@ class ApiLayerGenerator implements LayerGenerator
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $this->moduleSegment($blueprint),
+            'module' => $this->moduleNamespace($blueprint),
+            'module_path' => $this->modulePath($blueprint),
+            'module_segments' => $this->moduleSegments($blueprint),
+            'module_prefix' => $this->moduleClassPrefix($blueprint),
             'namespaces' => $namespaces,
             'application' => $this->deriveApplicationNamespaces($blueprint, $options),
             'naming' => $this->namingContext($blueprint),
@@ -200,7 +206,7 @@ class ApiLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['api'] ?? 'App\\Http\\Controllers\\Api', '\\');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespace($blueprint);
         $root = $base;
 
         if ($module !== null) {
@@ -231,7 +237,7 @@ class ApiLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = rtrim($options['paths']['api'] ?? 'app/Http/Controllers/Api', '/');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->modulePath($blueprint);
 
         $root = $basePath;
 
@@ -251,7 +257,7 @@ class ApiLayerGenerator implements LayerGenerator
     private function deriveApplicationNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['application'] ?? 'App\\Application', '\\');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespace($blueprint);
         $root = $base;
 
         if ($module !== null) {
@@ -273,17 +279,6 @@ class ApiLayerGenerator implements LayerGenerator
             'entity_plural_studly' => Str::pluralStudly($entityName),
             'entity_variable' => Str::camel($blueprint->entity()),
         ];
-    }
-
-    private function moduleSegment(Blueprint $blueprint): ?string
-    {
-        $module = $blueprint->module();
-
-        if ($module === null || $module === '') {
-            return null;
-        }
-
-        return Str::studly($module);
     }
 
     private function deriveModelContext(Blueprint $blueprint): array
@@ -687,7 +682,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizeNamespace($options['namespaces']['api_resources'], 'App\\Http\\Resources');
         }
 
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespace($blueprint);
 
         if ($module !== null) {
             $base .= '\\' . $module;
@@ -704,7 +699,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizePath($options['paths']['api_resources'], 'app/Http/Resources');
         }
 
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->modulePath($blueprint);
 
         if ($module !== null) {
             $base .= '/' . $module;
@@ -1080,7 +1075,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizeNamespace($options['namespaces']['api_requests']);
         }
 
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespace($blueprint);
 
         if ($module !== null) {
             $base .= '\\' . $module;
@@ -1097,7 +1092,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizePath($options['paths']['api_requests']);
         }
 
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->modulePath($blueprint);
 
         if ($module !== null) {
             $base .= '/' . $module;

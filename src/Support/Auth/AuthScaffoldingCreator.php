@@ -809,7 +809,14 @@ class AuthScaffoldingCreator
             $module = 'Shared';
         }
 
-        $moduleSegment = Str::studly($module);
+        $moduleSegments = array_filter(
+            array_map('trim', preg_split('/[\\\\\/]+/', (string) $module) ?: []),
+            static fn (string $segment): bool => $segment !== ''
+        );
+
+        $moduleSegment = $moduleSegments === []
+            ? 'Shared'
+            : implode('\', array_map(static fn (string $segment): string => Str::studly($segment), $moduleSegments));
         $entitySegment = Str::studly($entity);
 
         return sprintf('App\\Domain\\%s\\Models\\%s', $moduleSegment, $entitySegment);

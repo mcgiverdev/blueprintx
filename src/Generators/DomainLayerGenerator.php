@@ -11,10 +11,13 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
+use BlueprintX\Support\Concerns\InteractsWithModules;
 use Illuminate\Support\Str;
 
 class DomainLayerGenerator implements LayerGenerator
 {
+    use InteractsWithModules;
+
     public function __construct(private readonly TemplateEngine $templates)
     {
     }
@@ -117,7 +120,10 @@ class DomainLayerGenerator implements LayerGenerator
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $this->moduleSegment($blueprint),
+            'module' => $this->moduleNamespace($blueprint),
+            'module_path' => $this->modulePath($blueprint),
+            'module_segments' => $this->moduleSegments($blueprint),
+            'module_prefix' => $this->moduleClassPrefix($blueprint),
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'model' => $this->deriveModelContext($blueprint, $namespaces),
@@ -139,7 +145,7 @@ class DomainLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespace($blueprint);
         $domainRoot = $base;
 
         if ($module !== null) {
@@ -165,7 +171,7 @@ class DomainLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->modulePath($blueprint);
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
@@ -185,17 +191,6 @@ class DomainLayerGenerator implements LayerGenerator
             'shared_domain_conflict_exception' => sprintf('%s/DomainConflictException.php', $sharedRootPath),
             'shared_domain_validation_exception' => sprintf('%s/DomainValidationException.php', $sharedRootPath),
         ];
-    }
-
-    private function moduleSegment(Blueprint $blueprint): ?string
-    {
-        $module = $blueprint->module();
-
-        if ($module === null || $module === '') {
-            return null;
-        }
-
-        return Str::studly($module);
     }
 
     private function namingContext(Blueprint $blueprint): array
