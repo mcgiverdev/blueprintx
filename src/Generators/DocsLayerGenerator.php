@@ -95,10 +95,10 @@ class DocsLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = $options['paths']['docs'] ?? 'docs';
-        $modulePath = $blueprint->modulePath();
+        $module = $blueprint->module();
 
-        if ($modulePath !== null) {
-            $basePath .= '/' . $modulePath;
+        if ($module !== null && $module !== '') {
+            $basePath .= '/' . Str::studly($module);
         }
 
         $entityName = Str::studly($blueprint->entity());
