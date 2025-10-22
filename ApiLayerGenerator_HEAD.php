@@ -200,7 +200,7 @@ class ApiLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['api'] ?? 'App\\Http\\Controllers\\Api', '\\');
-        $module = $this->moduleNamespaceSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
@@ -231,7 +231,7 @@ class ApiLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = rtrim($options['paths']['api'] ?? 'app/Http/Controllers/Api', '/');
-        $module = $this->modulePathSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
 
         $root = $basePath;
 
@@ -251,7 +251,7 @@ class ApiLayerGenerator implements LayerGenerator
     private function deriveApplicationNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['application'] ?? 'App\\Application', '\\');
-        $module = $this->moduleNamespaceSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
@@ -277,62 +277,19 @@ class ApiLayerGenerator implements LayerGenerator
 
     private function moduleSegment(Blueprint $blueprint): ?string
     {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('', $segments);
-    }
-
-    private function moduleNamespaceSegment(Blueprint $blueprint): ?string
-    {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('\\', $segments);
-    }
-
-    private function modulePathSegment(Blueprint $blueprint): ?string
-    {
-        $segments = $this->normalizedModuleSegments($blueprint);
-
-        if ($segments === []) {
-            return null;
-        }
-
-        return implode('/', $segments);
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function normalizedModuleSegments(Blueprint $blueprint): array
-    {
         $module = $blueprint->module();
 
-        if (! is_string($module) || $module === '') {
-            return [];
+        if ($module === null || $module === '') {
+            return null;
         }
 
-        $normalized = str_replace('\\', '/', $module);
-        $parts = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
-
-        if ($parts === []) {
-            return [];
-        }
-
-        return array_map(static fn (string $part): string => Str::studly($part), $parts);
+        return Str::studly($module);
     }
 
     private function deriveModelContext(Blueprint $blueprint): array
     {
-        $identifierField = 'id';
-        $identifierPhpType = 'int';
+    $identifierField = 'id';
+    $identifierPhpType = 'int';
 
         foreach ($blueprint->fields() as $field) {
             if ($field->name !== 'id') {
@@ -730,7 +687,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizeNamespace($options['namespaces']['api_resources'], 'App\\Http\\Resources');
         }
 
-        $module = $this->moduleNamespaceSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
             $base .= '\\' . $module;
@@ -747,7 +704,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizePath($options['paths']['api_resources'], 'app/Http/Resources');
         }
 
-        $module = $this->modulePathSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
             $base .= '/' . $module;
@@ -1123,7 +1080,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizeNamespace($options['namespaces']['api_requests']);
         }
 
-        $module = $this->moduleNamespaceSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
             $base .= '\\' . $module;
@@ -1140,7 +1097,7 @@ class ApiLayerGenerator implements LayerGenerator
             $base = $this->normalizePath($options['paths']['api_requests']);
         }
 
-        $module = $this->modulePathSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
             $base .= '/' . $module;

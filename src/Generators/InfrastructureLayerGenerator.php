@@ -98,7 +98,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['infrastructure'] ?? 'App\\Infrastructure\\Persistence\\Eloquent', '\\');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespaceSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
@@ -118,7 +118,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['infrastructure'] ?? 'app/Infrastructure/Persistence/Eloquent', '/');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->modulePathSegment($blueprint);
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
@@ -139,7 +139,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function deriveDomainNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespaceSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
@@ -159,7 +159,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function deriveApplicationNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['application'] ?? 'App\\Application', '\\');
-        $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleNamespaceSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
@@ -183,13 +183,56 @@ class InfrastructureLayerGenerator implements LayerGenerator
 
     private function moduleSegment(Blueprint $blueprint): ?string
     {
-        $module = $blueprint->module();
+        $segments = $this->normalizedModuleSegments($blueprint);
 
-        if ($module === null || $module === '') {
+        if ($segments === []) {
             return null;
         }
 
-        return Str::studly($module);
+        return implode('', $segments);
+    }
+
+    private function moduleNamespaceSegment(Blueprint $blueprint): ?string
+    {
+        $segments = $this->normalizedModuleSegments($blueprint);
+
+        if ($segments === []) {
+            return null;
+        }
+
+        return implode('\\', $segments);
+    }
+
+    private function modulePathSegment(Blueprint $blueprint): ?string
+    {
+        $segments = $this->normalizedModuleSegments($blueprint);
+
+        if ($segments === []) {
+            return null;
+        }
+
+        return implode('/', $segments);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function normalizedModuleSegments(Blueprint $blueprint): array
+    {
+        $module = $blueprint->module();
+
+        if (! is_string($module) || $module === '') {
+            return [];
+        }
+
+        $normalized = str_replace('\\', '/', $module);
+        $parts = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
+
+        if ($parts === []) {
+            return [];
+        }
+
+        return array_map(static fn (string $part): string => Str::studly($part), $parts);
     }
 
     private function deriveModelContext(Blueprint $blueprint, array $domainNamespaces): array
