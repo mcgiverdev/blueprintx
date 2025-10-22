@@ -139,18 +139,15 @@ class OutputWriter
 
         foreach ($segments as $segment) {
             $expectedPath = $current . DIRECTORY_SEPARATOR . $segment;
-
-            if (is_dir($expectedPath)) {
-                $current = $expectedPath;
-
-                continue;
-            }
-
             $matchedPath = $this->findDirectoryCaseInsensitive($current, $segment);
 
             if ($matchedPath !== null) {
-                if ($matchedPath !== $expectedPath && ! $this->renameDirectoryPreservingCase($matchedPath, $expectedPath)) {
-                    return false;
+                $actualName = basename($matchedPath);
+
+                if ($actualName !== $segment) {
+                    if (! $this->renameDirectoryPreservingCase($matchedPath, $expectedPath)) {
+                        return false;
+                    }
                 }
 
                 $current = $expectedPath;
