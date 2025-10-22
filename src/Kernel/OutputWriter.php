@@ -30,9 +30,12 @@ class OutputWriter
 
     private function writeFile(GeneratedFile $file, bool $dryRun, bool $force): array
     {
-        $relativePath = ltrim($file->path, '\\/');
-        $absolutePath = $this->basePath . DIRECTORY_SEPARATOR . $relativePath;
-        $directory = dirname($absolutePath);
+        $relativePath = ltrim(str_replace('\\', '/', $file->path), '/');
+        $absolutePath = $this->basePath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+        $relativeDirectory = trim(str_replace('\\', '/', dirname($relativePath)), './');
+        $directory = $relativeDirectory === ''
+            ? $this->basePath
+            : $this->basePath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativeDirectory);
         $bytes = strlen($file->contents);
         $checksum = hash('sha256', $file->contents);
 
@@ -42,6 +45,17 @@ class OutputWriter
                 'full_path' => $absolutePath,
                 'status' => 'preview',
                 'preview' => $file->contents,
+                'bytes' => $bytes,
+                'checksum' => $checksum,
+            ];
+        }
+
+        if (! $this->ensureDirectoryStructure($relativeDirectory)) {
+            return [
+                'path' => $relativePath,
+                'full_path' => $absolutePath,
+                'status' => 'error',
+                'message' => sprintf('No se pudo preparar el directorio "%s".', $directory),
                 'bytes' => $bytes,
                 'checksum' => $checksum,
             ];
@@ -109,5 +123,102 @@ class OutputWriter
         }
 
         return $result;
+    }
+
+    private function ensureDirectoryStructure(string $relativeDirectory): bool
+    {
+        $normalized = trim(str_replace('\\', '/', $relativeDirectory), '/');
+
+        if ($normalized === '') {
+            return true;
+        }
+
+        $segments = array_filter(explode('/', $normalized), static fn (string $segment): bool => $segment !== '' && $segment !== '.');
+
+        $current = $this->basePath;
+
+        foreach ($segments as $segment) {
+            $expectedPath = $current . DIRECTORY_SEPARATOR . $segment;
+
+            if (is_dir($expectedPath)) {
+                $current = $expectedPath;
+
+                continue;
+            }
+
+            $matchedPath = $this->findDirectoryCaseInsensitive($current, $segment);
+
+            if ($matchedPath !== null) {
+                if ($matchedPath !== $expectedPath && ! $this->renameDirectoryPreservingCase($matchedPath, $expectedPath)) {
+                    return false;
+                }
+
+                $current = $expectedPath;
+
+                continue;
+            }
+
+            if (! mkdir($expectedPath, 0777, true) && ! is_dir($expectedPath)) {
+                return false;
+            }
+
+            $current = $expectedPath;
+        }
+
+        return true;
+    }
+
+    private function findDirectoryCaseInsensitive(string $parent, string $segment): ?string
+    {
+        if (! is_dir($parent)) {
+            return null;
+        }
+
+        $entries = scandir($parent);
+
+        if ($entries === false) {
+            return null;
+        }
+
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $candidate = $parent . DIRECTORY_SEPARATOR . $entry;
+
+            if (! is_dir($candidate)) {
+                continue;
+            }
+
+            if (strcasecmp($entry, $segment) === 0) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function renameDirectoryPreservingCase(string $currentPath, string $expectedPath): bool
+    {
+        if ($currentPath === $expectedPath) {
+            return true;
+        }
+
+        if (@rename($currentPath, $expectedPath)) {
+            return true;
+        }
+
+        $tempPath = $expectedPath . '__tmp__' . uniqid('', false);
+
+        if (@rename($currentPath, $tempPath)) {
+            if (@rename($tempPath, $expectedPath)) {
+                return true;
+            }
+
+            @rename($tempPath, $currentPath);
+        }
+
+        return false;
     }
 }

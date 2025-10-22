@@ -717,7 +717,7 @@ class ApiLayerGenerator implements LayerGenerator
         $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
-            $base .= '/' . $module;
+            $base .= '/' . str_replace('\\', '/', $module);
         }
 
         return $base;
@@ -1110,7 +1110,7 @@ class ApiLayerGenerator implements LayerGenerator
         $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
-            $base .= '/' . $module;
+            $base .= '/' . str_replace('\\', '/', $module);
         }
 
         return trim($base, '/');
