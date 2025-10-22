@@ -68,6 +68,79 @@ class SemanticBlueprintValidatorTest extends TestCase
         $this->assertContains('docs.invalid_example', $warnings);
     }
 
+    public function test_tenancy_requires_mode_when_overriding_options(): void
+    {
+        $blueprint = Blueprint::fromArray([
+            'path' => 'blueprints/tenant/hr/employee.yaml',
+            'module' => 'tenant/hr',
+            'entity' => 'Employee',
+            'table' => 'employees',
+            'architecture' => 'hexagonal',
+            'fields' => [
+                ['name' => 'id', 'type' => 'uuid'],
+            ],
+            'relations' => [],
+            'options' => [],
+            'api' => [
+                'base_path' => '/hr/employees',
+                'middleware' => [],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [],
+            'tenancy' => [
+                'storage' => 'tenant',
+            ],
+        ]);
+
+        $validator = new SemanticBlueprintValidator();
+        $result = $validator->validate($blueprint);
+
+        $this->assertContains('tenancy.mode.missing', $this->codes($result['errors']));
+    }
+
+    public function test_tenancy_detects_mismatched_mode_and_incompatible_scopes(): void
+    {
+        $blueprint = Blueprint::fromArray([
+            'path' => 'blueprints/tenant/hr/employee.yaml',
+            'module' => 'tenant/hr',
+            'entity' => 'Employee',
+            'table' => 'employees',
+            'architecture' => 'hexagonal',
+            'fields' => [
+                ['name' => 'id', 'type' => 'uuid'],
+            ],
+            'relations' => [],
+            'options' => [],
+            'api' => [
+                'base_path' => '/hr/employees',
+                'middleware' => [],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [],
+            'tenancy' => [
+                'mode' => 'central',
+                'storage' => 'tenant',
+                'routing_scope' => 'tenant',
+                'seed_scope' => 'tenant',
+            ],
+        ]);
+
+        $validator = new SemanticBlueprintValidator();
+        $result = $validator->validate($blueprint);
+
+        $errorCodes = $this->codes($result['errors']);
+        $warningCodes = $this->codes($result['warnings']);
+
+        $this->assertContains('tenancy.storage.invalid', $errorCodes);
+        $this->assertContains('tenancy.routing_scope.invalid', $errorCodes);
+        $this->assertContains('tenancy.seed_scope.invalid', $errorCodes);
+        $this->assertContains('tenancy.mode.mismatch', $warningCodes);
+    }
+
     /**
      * @param ValidationMessage[] $messages
      * @return array<int, string>

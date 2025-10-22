@@ -18,6 +18,8 @@ class SemanticBlueprintValidator
         $errors = [];
         $warnings = [];
 
+        $this->validateTenancy($blueprint, $errors, $warnings);
+
         $fieldNames = [];
         foreach ($blueprint->fields() as $index => $field) {
             if (isset($fieldNames[$field->name])) {
@@ -27,7 +29,6 @@ class SemanticBlueprintValidator
                     sprintf('fields[%d].name', $index)
                 );
             }
-
             $fieldNames[$field->name] = true;
         }
 
@@ -100,6 +101,176 @@ class SemanticBlueprintValidator
             'errors' => $errors,
             'warnings' => $warnings,
         ];
+    }
+
+    /**
+     * @param ValidationMessage[] $errors
+     * @param ValidationMessage[] $warnings
+     */
+    private function validateTenancy(Blueprint $blueprint, array &$errors, array &$warnings): void
+    {
+        $tenancy = $blueprint->tenancy();
+
+        $declaredMode = null;
+        if (isset($tenancy['mode']) && is_string($tenancy['mode'])) {
+            $declaredMode = strtolower($tenancy['mode']);
+        }
+
+        $hasAdditionalConfig = false;
+        foreach (['storage', 'connection', 'routing_scope', 'seed_scope'] as $key) {
+            if (! array_key_exists($key, $tenancy)) {
+                continue;
+            }
+
+            $value = $tenancy[$key];
+            if ($value === null) {
+                continue;
+            }
+
+            if (is_string($value) && trim($value) === '') {
+                continue;
+            }
+
+            $hasAdditionalConfig = true;
+            break;
+        }
+
+        if ($declaredMode === null && $hasAdditionalConfig) {
+            $errors[] = new ValidationMessage(
+                'tenancy.mode.missing',
+                'La sección tenancy requiere "mode" cuando se configuran otras opciones.',
+                'tenancy.mode'
+            );
+        }
+
+        $inferredMode = $this->inferTenancyMode($blueprint);
+
+        if ($declaredMode !== null && $declaredMode !== $inferredMode) {
+            $warnings[] = new ValidationMessage(
+                'tenancy.mode.mismatch',
+                sprintf('El tenancy.mode "%s" no coincide con la convención de carpeta "%s".', $declaredMode, $inferredMode),
+                'tenancy.mode'
+            );
+        }
+
+        $resolvedMode = $declaredMode ?? $inferredMode;
+
+        $storage = null;
+        if (isset($tenancy['storage']) && is_string($tenancy['storage'])) {
+            $storage = strtolower(trim($tenancy['storage']));
+        }
+
+        if ($storage !== null) {
+            if ($resolvedMode === 'central' && $storage === 'tenant') {
+                $errors[] = new ValidationMessage(
+                    'tenancy.storage.invalid',
+                    'El valor tenancy.storage "tenant" no es compatible con tenancy.mode "central".',
+                    'tenancy.storage'
+                );
+            }
+
+            if ($resolvedMode === 'tenant' && $storage === 'central') {
+                $errors[] = new ValidationMessage(
+                    'tenancy.storage.invalid',
+                    'El valor tenancy.storage "central" no es compatible con tenancy.mode "tenant".',
+                    'tenancy.storage'
+                );
+            }
+        }
+
+        $routingScope = null;
+        if (isset($tenancy['routing_scope']) && is_string($tenancy['routing_scope'])) {
+            $routingScope = strtolower(trim($tenancy['routing_scope']));
+        }
+
+        if ($routingScope !== null && $routingScope !== 'both') {
+            if ($resolvedMode === 'central' && $routingScope === 'tenant') {
+                $errors[] = new ValidationMessage(
+                    'tenancy.routing_scope.invalid',
+                    'El routing_scope "tenant" no puede usarse cuando tenancy.mode es "central".',
+                    'tenancy.routing_scope'
+                );
+            }
+
+            if ($resolvedMode === 'tenant' && $routingScope === 'central') {
+                $errors[] = new ValidationMessage(
+                    'tenancy.routing_scope.invalid',
+                    'El routing_scope "central" no puede usarse cuando tenancy.mode es "tenant".',
+                    'tenancy.routing_scope'
+                );
+            }
+        }
+
+        $seedScope = null;
+        if (isset($tenancy['seed_scope']) && is_string($tenancy['seed_scope'])) {
+            $seedScope = strtolower(trim($tenancy['seed_scope']));
+        }
+
+        if ($seedScope !== null && $seedScope !== 'both') {
+            if ($resolvedMode === 'central' && $seedScope === 'tenant') {
+                $errors[] = new ValidationMessage(
+                    'tenancy.seed_scope.invalid',
+                    'El seed_scope "tenant" no puede usarse cuando tenancy.mode es "central".',
+                    'tenancy.seed_scope'
+                );
+            }
+
+            if ($resolvedMode === 'tenant' && $seedScope === 'central') {
+                $errors[] = new ValidationMessage(
+                    'tenancy.seed_scope.invalid',
+                    'El seed_scope "central" no puede usarse cuando tenancy.mode es "tenant".',
+                    'tenancy.seed_scope'
+                );
+            }
+        }
+    }
+
+    private function inferTenancyMode(Blueprint $blueprint): string
+    {
+        $module = $blueprint->module();
+        if ($module !== null) {
+            $mode = $this->findModeInSegments(explode('/', $module));
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        $path = $blueprint->path();
+        if ($path !== '') {
+            $normalizedPath = str_replace('\\', '/', $path);
+            $segments = array_filter(explode('/', $normalizedPath), static fn ($segment) => $segment !== '');
+            $mode = $this->findModeInSegments($segments);
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        return 'central';
+    }
+
+    /**
+     * @param iterable<int, string> $segments
+     */
+    private function findModeInSegments(iterable $segments): ?string
+    {
+        foreach ($segments as $segment) {
+            $mode = $this->modeFromSegment($segment);
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        return null;
+    }
+
+    private function modeFromSegment(string $segment): ?string
+    {
+        return match (strtolower($segment)) {
+            'central' => 'central',
+            'tenant' => 'tenant',
+            'shared' => 'shared',
+            default => null,
+        };
     }
 
     /**

@@ -53,6 +53,12 @@ class BlueprintSchemaValidator
 
     private function preparePayload(array $blueprintData): object
     {
+        if (! array_key_exists('tenancy', $blueprintData) || $blueprintData['tenancy'] === []) {
+            $blueprintData['tenancy'] = new \stdClass();
+        } else {
+            $blueprintData['tenancy'] = $this->convertAssociativeArrays($blueprintData['tenancy']);
+        }
+
         if (! array_key_exists('docs', $blueprintData) || $blueprintData['docs'] === []) {
               $blueprintData['docs'] = new \stdClass();
         } else {

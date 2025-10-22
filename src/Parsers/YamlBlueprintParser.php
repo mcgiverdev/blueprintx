@@ -90,11 +90,14 @@ class YamlBlueprintParser implements BlueprintParser
     *     api:array{base_path:?string,middleware:array<int,string>,endpoints:array<int,array>,resources:array<string,mixed>},
     *     docs:array<string,mixed>,
     *     errors:array<int,array<string,mixed>>,
-     *     metadata:array<string,mixed>
+    *     metadata:array<string,mixed>,
+    *     tenancy:array<string,mixed>
      * }
      */
     private function normalize(array $data, string $fullPath): array
     {
+        $module = $this->detectModule($fullPath);
+
         $entity = Arr::get($data, 'entity');
         if (! is_string($entity) || $entity === '') {
             throw new BlueprintParseException(sprintf('El blueprint "%s" no define una entidad válida.', $fullPath));
@@ -140,7 +143,7 @@ class YamlBlueprintParser implements BlueprintParser
             $metadata = [];
         }
 
-        $module = $this->detectModule($fullPath);
+        $tenancy = $this->normalizeTenancy(Arr::get($data, 'tenancy', null));
 
         return [
             'path' => $fullPath,
@@ -160,6 +163,7 @@ class YamlBlueprintParser implements BlueprintParser
             'docs' => $docs,
             'errors' => $errors,
             'metadata' => $metadata,
+            'tenancy' => $tenancy,
         ];
     }
 
@@ -398,6 +402,65 @@ class YamlBlueprintParser implements BlueprintParser
         }
 
         return $errors;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<string, mixed>
+     */
+    private function normalizeTenancy(mixed $value): array
+    {
+        if ($value === null) {
+            return [];
+        }
+
+        if (! is_array($value)) {
+            throw new BlueprintParseException('La clave "tenancy" debe ser un arreglo.');
+        }
+
+        $result = [];
+
+        foreach (['mode', 'storage', 'routing_scope', 'seed_scope'] as $key) {
+            if (! array_key_exists($key, $value)) {
+                continue;
+            }
+
+            $raw = $value[$key];
+
+            if ($raw === null) {
+                continue;
+            }
+
+            if (! is_string($raw)) {
+                throw new BlueprintParseException(sprintf('La clave "tenancy.%s" debe ser una cadena.', $key));
+            }
+
+            $normalized = strtolower(trim($raw));
+
+            if ($normalized === '') {
+                continue;
+            }
+
+            $result[$key] = $normalized;
+        }
+
+        if (array_key_exists('connection', $value)) {
+            $connection = $value['connection'];
+
+            if ($connection === null) {
+                // nothing to add when null
+            } elseif (! is_string($connection)) {
+                throw new BlueprintParseException('La clave "tenancy.connection" debe ser una cadena.');
+            } else {
+                $normalizedConnection = trim($connection);
+
+                if ($normalizedConnection !== '') {
+                    $result['connection'] = $normalizedConnection;
+                }
+            }
+        }
+
+        return $result;
     }
 
     private function detectModule(string $fullPath): ?string

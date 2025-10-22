@@ -12,6 +12,7 @@ class Blueprint
      * @param array<string, mixed> $docs
      * @param array<int, array<string, mixed>> $errors
      * @param array<string, mixed> $metadata
+     * @param array<string, mixed> $tenancy
      * @param array<int, string> $middleware
      */
     public function __construct(
@@ -30,6 +31,7 @@ class Blueprint
         private readonly array $docs,
         private readonly array $errors,
         private readonly array $metadata,
+        private readonly array $tenancy,
     ) {
     }
 
@@ -46,7 +48,8 @@ class Blueprint
     *     api:array{base_path:?string,middleware:array<int,string>,resources:array<string,mixed>,endpoints:array<int,array>},
     *     docs:array<string,mixed>,
     *     errors:array<int,array<string,mixed>>,
-     *     metadata:array<string,mixed>
+    *     metadata:array<string,mixed>,
+    *     tenancy?:array<string,mixed>
      * } $data
      */
     public static function fromArray(array $data): self
@@ -54,6 +57,10 @@ class Blueprint
         $fields = array_map(static fn (array $field): Field => Field::fromArray($field), $data['fields']);
         $relations = array_map(static fn (array $relation): Relation => Relation::fromArray($relation), $data['relations']);
         $endpoints = array_map(static fn (array $endpoint): Endpoint => Endpoint::fromArray($endpoint), $data['api']['endpoints']);
+        $tenancy = $data['tenancy'] ?? [];
+        if (! is_array($tenancy)) {
+            $tenancy = [];
+        }
 
         return new self(
             $data['path'],
@@ -71,6 +78,7 @@ class Blueprint
             $data['docs'],
             $data['errors'],
             $data['metadata'],
+            $tenancy,
         );
     }
 
@@ -168,6 +176,14 @@ class Blueprint
         return $this->metadata;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function tenancy(): array
+    {
+        return $this->tenancy;
+    }
+
     public function toArray(): array
     {
         return [
@@ -188,6 +204,7 @@ class Blueprint
             'docs' => $this->docs,
             'errors' => $this->schemaErrors(),
             'metadata' => $this->metadata,
+            'tenancy' => $this->tenancy,
         ];
     }
 
