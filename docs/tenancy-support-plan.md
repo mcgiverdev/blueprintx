@@ -124,6 +124,17 @@ Estado general: **Pendiente**
 - Registrar resultados y decisiones en sección nueva “Hallazgos de entrevistas” dentro de este documento.
 - Ajustar roadmap de fases posteriores según aprendizajes.
 
+#### Hallazgos de entrevistas (simulación IA)
+
+- **Proyecto B (SaaS RH)** – Ejercicio con GitHub Copilot (QA Lead)
+  - **Stack actual**: `stancl/tenancy` con subdominios; mezcla de migraciones centrales y tenant; pruebas Pest/PHPUnit con helpers de la librería y un tenant único en CI.
+  - **Pain points**: drift entre migraciones central/tenant y rollbacks frágiles; fugas de datos por tests sin tenancy inicializado; generación manual de scopes/seeders; overhead para levantar tenants en QA.
+  - **Expectativas**: convención `storage` central/tenant/both en YAML; traits y scopes tenant-aware; factories/seeders diferenciadas; rutas y tests duales; comandos que generen artefactos y matrices de CI por contexto.
+  - **Métricas de éxito**: -70 % fallos “Wrong database”; ≥80 % cobertura tenant-aware; bootstrap <10 s por suite; rollbacks consistentes en ambos contextos; contract tests verdes.
+  - **Riesgos detectados**: coordinación de rollbacks compartidos; costo CI duplicado; caching/queues multi-contexto; performance de scopes; mantenimiento de snapshots `both`; onboarding de código legado.
+  - **Prioridades sugeridas**: definir esquema YAML (`storage`, `connection`, `routing-scope`, `seed-scope`); spike con módulo piloto; nuevas plantillas de tests/seed/routing; configurar matriz CI; migrar módulo crítico como prueba end-to-end.
+  - **Nota**: resultado simulado para preparar entrevistas reales; requiere validación con el equipo antes de cerrar la fase.
+
 ### Historias de usuario preliminares
 
 
