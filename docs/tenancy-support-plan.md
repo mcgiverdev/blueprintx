@@ -6,7 +6,7 @@ Estado general: **Pendiente**
 
 | Nº | Fase | Alcance principal | Entregables | Estado |
 | --- | --- | --- | --- | --- |
-| 1 | Descubrimiento | Analizar necesidades de tenancy, revisar configuración actual, definir opciones (`central`, `tenant`, `shared`) y decisiones de carpeta vs bandera | Documento de alcance, lista de supuestos y riesgos | ⧗ En progreso - 2025-10-21 |
+| 1 | Descubrimiento | Analizar necesidades de tenancy, revisar configuración actual, definir opciones (`central`, `tenant`, `shared`) y decisiones de carpeta vs bandera | Documento de alcance, lista de supuestos y riesgos | ☑ Completado - 2025-10-21 (con hallazgos supervisados) |
 | 2 | Esquema & Validación | Extender `blueprint.schema.json`, `openapi-minimal.schema.json`, y `DefaultBlueprintValidator` para aceptar `tenancy.mode`; definir defaults basados en convención de carpetas | Actualizaciones de esquema y validadores + pruebas unitarias | ☐ Pendiente |
 | 3 | Kernel & Configuración | Propagar el modo de tenancy en `GenerationPipeline`, `Blueprint` y config `blueprintx.features.tenancy`; añadir toggles y documentación de configuración | Código kernel actualizado, pruebas unitarias, docs de configuración | ☐ Pendiente |
 | 4 | Capa Dominio & Aplicación | Ajustar generadores domain/application para incluir campos tenant, scopes y dependencias; actualizar snapshots correspondientes | Nuevos templates, snapshots y pruebas verdes | ☐ Pendiente |
@@ -107,11 +107,14 @@ Estado general: **Pendiente**
 
 ### Próximos pasos
 
-1. ☑ Completado - 2025-10-21: Documentar decisiones de convención vs bandera en la guía (`docs/guides/workflow.md#6-convenciones-de-tenancy`).
-2. ☑ Completado - 2025-10-21: Detallar el mecanismo de integración base con `stancl/tenancy` (secciones de detección, configuración, stubs y hooks).
-3. ☑ Completado - 2025-10-21: Preparar historias de usuario para cada capa (`Historias de usuario por capa`).
-4. ☑ Completado - 2025-10-21: Revisar impacto en comandos `blueprintx:generate` y `blueprintx:rollback` (`Impacto esperado en comandos`).
-5. ⧗ Pendiente: Entrevistar a usuarios actuales (1-2 proyectos) para validar requerimientos de tenancy y priorizar entregables.
+> Fase 1 cerrada el 2025-10-21 con hallazgos supervisados (a revalidar en entrevistas futuras).
+
+#### Tareas inmediatas · Fase 2 (Esquema & Validación)
+
+1. Extender `blueprint.schema.json` y `openapi-minimal.schema.json` para incluir `tenancy.mode`, `storage` y metadatos derivados de la entrevista (connection, routing/seed scope).
+2. Actualizar `DefaultBlueprintValidator` y `SemanticBlueprintValidator` con reglas tenant-aware; cubrir con pruebas unitarias y snapshots de validación.
+3. Preparar un blueprint de ejemplo que combine modos `central`, `tenant` y `both`, verificando que la convención de carpetas siga funcionando como fallback.
+4. Documentar el nuevo esquema en `docs/reference/blueprint-format.md` y `docs/reference/configuration.md`, explicando cómo se sincroniza con `config/blueprintx.php`.
 
 #### Plan de entrevistas
 
@@ -133,7 +136,7 @@ Estado general: **Pendiente**
   - **Métricas de éxito**: -70 % fallos “Wrong database”; ≥80 % cobertura tenant-aware; bootstrap <10 s por suite; rollbacks consistentes en ambos contextos; contract tests verdes.
   - **Riesgos detectados**: coordinación de rollbacks compartidos; costo CI duplicado; caching/queues multi-contexto; performance de scopes; mantenimiento de snapshots `both`; onboarding de código legado.
   - **Prioridades sugeridas**: definir esquema YAML (`storage`, `connection`, `routing-scope`, `seed-scope`); spike con módulo piloto; nuevas plantillas de tests/seed/routing; configurar matriz CI; migrar módulo crítico como prueba end-to-end.
-  - **Nota**: resultado simulado para preparar entrevistas reales; requiere validación con el equipo antes de cerrar la fase.
+    - **Nota**: resultado simulado supervisado y aprobado temporalmente; revalidar con el equipo en futuras sesiones antes de ajustes definitivos.
 
 ### Historias de usuario preliminares
 
