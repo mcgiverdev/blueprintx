@@ -1706,9 +1706,22 @@ class DatabaseLayerGenerator implements LayerGenerator
             return null;
         }
 
+        $segments = array_values(array_filter(explode('\\', $moduleStudly), static fn (string $segment): bool => $segment !== ''));
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $classSegment = array_pop($segments);
+        $namespace = 'Database\Seeders';
+
+        if ($segments !== []) {
+            $namespace .= '\\' . implode('\\', $segments);
+        }
+
         return [
-            'namespace' => 'Database\\Seeders',
-            'class_name' => $moduleStudly . 'Seeder',
+            'namespace' => $namespace,
+            'class_name' => $classSegment . 'Seeder',
             'imports' => $imports,
             'seed_calls' => $calls,
         ];
