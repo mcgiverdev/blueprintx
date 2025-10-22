@@ -113,11 +113,19 @@ class DomainLayerGenerator implements LayerGenerator
         ];
 
         $namespaces = $this->deriveNamespaces($blueprint, $options);
+        $moduleContext = [
+            'raw' => $blueprint->module(),
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
+        ];
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $blueprint->moduleNamespace(),
+            'module' => $moduleContext['namespace'],
+            'module_context' => $moduleContext,
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'model' => $this->deriveModelContext($blueprint, $namespaces),
@@ -139,11 +147,11 @@ class DomainLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $blueprint->moduleNamespace();
+        $moduleNamespace = $blueprint->moduleNamespace();
         $domainRoot = $base;
 
-        if ($module !== null) {
-            $domainRoot .= '\\' . $module;
+        if ($moduleNamespace !== null) {
+            $domainRoot .= '\\' . $moduleNamespace;
         }
 
         $sharedBase = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
@@ -165,13 +173,13 @@ class DomainLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
-        $module = $blueprint->modulePath();
+        $modulePath = $blueprint->modulePath();
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
 
-        if ($module !== null) {
-            $root .= '/' . $module;
+        if ($modulePath !== null) {
+            $root .= '/' . $modulePath;
         }
 
         $sharedRootPath = sprintf('%s/Shared/Exceptions', $basePath);

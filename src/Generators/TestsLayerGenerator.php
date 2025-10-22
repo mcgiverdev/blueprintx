@@ -75,6 +75,14 @@ class TestsLayerGenerator implements LayerGenerator
             $naming['entity_variable'] ?? 'entity'
         );
 
+        $moduleContext = [
+            'raw' => $blueprint->module(),
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
+        ];
+
         $entity = [
             'name' => $blueprint->entity(),
             'module' => $blueprint->module(),
@@ -88,6 +96,8 @@ class TestsLayerGenerator implements LayerGenerator
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
+            'module' => $moduleContext['namespace'],
+            'module_context' => $moduleContext,
             'namespaces' => $this->deriveNamespaces($blueprint, $options),
             'naming' => $naming,
             'model' => $this->deriveModelContext($blueprint),
@@ -156,13 +166,9 @@ class TestsLayerGenerator implements LayerGenerator
     private function resolveModelClass(Blueprint $blueprint): string
     {
         $moduleNamespace = $blueprint->moduleNamespace();
+        $prefix = $moduleNamespace !== null ? $moduleNamespace . '\\' : '';
 
-        $domainNamespace = 'App\\Domain';
-        if ($moduleNamespace !== null) {
-            $domainNamespace .= '\\' . $moduleNamespace;
-        }
-
-        return sprintf('%s\\Models\\%s', $domainNamespace, Str::studly($blueprint->entity()));
+        return sprintf('App\\Domain\\%sModels\\%s', $prefix, Str::studly($blueprint->entity()));
     }
 
     private function deriveModelContext(Blueprint $blueprint): array
@@ -220,7 +226,7 @@ class TestsLayerGenerator implements LayerGenerator
     private function prepareRelations(Blueprint $blueprint): array
     {
         $moduleNamespace = $blueprint->moduleNamespace();
-        $moduleNamespacePrefix = $moduleNamespace !== null ? $moduleNamespace . '\\' : '';
+        $modulePrefix = $moduleNamespace !== null ? $moduleNamespace . '\\' : '';
 
         $relations = [];
         $existingRelationFields = [];
@@ -233,11 +239,7 @@ class TestsLayerGenerator implements LayerGenerator
             $field = $relation->field;
             $variable = $this->relationVariableFromField($field, $relation->target);
             $targetStudly = Str::studly($relation->target);
-            $class = sprintf(
-                'App\\Domain\\%sModels\\%s',
-                $moduleNamespacePrefix,
-                $targetStudly
-            );
+            $class = sprintf('App\\Domain\\%sModels\\%s', $modulePrefix, $targetStudly);
 
             $relations[] = [
                 'name' => $relation->target,
@@ -251,7 +253,7 @@ class TestsLayerGenerator implements LayerGenerator
             $existingRelationFields[] = $field;
         }
 
-    $implicitRelations = $this->inferImplicitBelongsToRelations($blueprint, $existingRelationFields, $moduleNamespacePrefix);
+        $implicitRelations = $this->inferImplicitBelongsToRelations($blueprint, $existingRelationFields, $modulePrefix);
 
         return array_merge($relations, $implicitRelations);
     }
@@ -303,7 +305,7 @@ class TestsLayerGenerator implements LayerGenerator
     private function inferImplicitBelongsToRelations(
         Blueprint $blueprint,
         array $existingRelationFields,
-        string $moduleNamespace
+        string $modulePrefix
     ): array {
         $relations = [];
 
@@ -327,7 +329,7 @@ class TestsLayerGenerator implements LayerGenerator
             }
 
             $variable = $this->relationVariableFromField($fieldName, $targetStudly);
-            $class = sprintf('App\\Domain\\%sModels\\%s', $moduleNamespace, $targetStudly);
+            $class = sprintf('App\\Domain\\%sModels\\%s', $modulePrefix, $targetStudly);
 
             $relations[] = [
                 'name' => $targetStudly,

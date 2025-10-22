@@ -97,11 +97,19 @@ class ApplicationLayerGenerator implements LayerGenerator
         ];
 
         $namespaces = $this->deriveNamespaces($blueprint, $options);
+        $moduleContext = [
+            'raw' => $blueprint->module(),
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
+        ];
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $blueprint->moduleNamespace(),
+            'module' => $moduleContext['namespace'],
+            'module_context' => $moduleContext,
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'domain' => $this->deriveDomainNamespaces($blueprint, $options),
@@ -121,11 +129,11 @@ class ApplicationLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['application'] ?? 'App\\Application', '\\');
-        $module = $blueprint->moduleNamespace();
+        $moduleNamespace = $blueprint->moduleNamespace();
         $root = $base;
 
-        if ($module !== null) {
-            $root .= '\\' . $module;
+        if ($moduleNamespace !== null) {
+            $root .= '\\' . $moduleNamespace;
         }
 
         return [
@@ -145,14 +153,14 @@ class ApplicationLayerGenerator implements LayerGenerator
     {
         $basePath = rtrim($options['paths']['application'] ?? 'app/Application', '/');
         $sharedBasePath = rtrim($options['paths']['application_shared'] ?? ($basePath . '/Shared'), '/');
-        $module = $blueprint->modulePath();
+        $modulePath = $blueprint->modulePath();
         $entityName = Str::studly($blueprint->entity());
         $entityPlural = Str::pluralStudly($entityName);
 
         $root = $basePath;
 
-        if ($module !== null) {
-            $root .= '/' . $module;
+        if ($modulePath !== null) {
+            $root .= '/' . $modulePath;
         }
 
         return [
@@ -278,11 +286,11 @@ class ApplicationLayerGenerator implements LayerGenerator
     private function deriveDomainNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $blueprint->moduleNamespace();
+        $moduleNamespace = $blueprint->moduleNamespace();
         $root = $base;
 
-        if ($module !== null) {
-            $root .= '\\' . $module;
+        if ($moduleNamespace !== null) {
+            $root .= '\\' . $moduleNamespace;
         }
 
         return [
@@ -292,5 +300,4 @@ class ApplicationLayerGenerator implements LayerGenerator
             'shared_exceptions' => trim($options['namespaces']['domain_shared_exceptions'] ?? 'App\\Domain\\Shared\\Exceptions', '\\'),
         ];
     }
-
 }

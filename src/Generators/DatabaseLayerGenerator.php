@@ -87,17 +87,7 @@ class DatabaseLayerGenerator implements LayerGenerator
                 $result->addFile(new GeneratedFile(
                     $alterPath['path'],
                     $this->templates->render($template, $alterContext),
-                    true
-                ));
-
-                $this->storeReservedAlterHistory($blueprint, $alterPath['prefix'], $reservedAlter['metadata']);
-            } else {
                 $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $template, $driver->name()));
-            }
-        }
-
-        if ($this->templates->exists($factoryTemplate)) {
-            $result->addFile(new GeneratedFile(
                 $paths['factory'],
                 $this->templates->render($factoryTemplate, $context)
             ));
@@ -160,14 +150,21 @@ class DatabaseLayerGenerator implements LayerGenerator
             'options' => $blueprint->options(),
         ];
 
-        $moduleNamespace = $blueprint->moduleNamespace();
+        $moduleContext = [
+            'raw' => $blueprint->module(),
+            'segments' => $blueprint->moduleSegments(),
+            'namespace' => $blueprint->moduleNamespace(),
+            'path' => $blueprint->modulePath(),
+            'class_prefix' => $blueprint->moduleClassPrefix(),
+        ];
         $namespaces = $this->deriveNamespaces($blueprint, $options);
         $relationsByField = $this->indexRelationsByField($blueprint);
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $moduleNamespace,
+            'module' => $moduleContext['namespace'],
+            'module_context' => $moduleContext,
             'namespaces' => $namespaces,
             'driver' => [
                 'name' => $driver->name(),
@@ -210,11 +207,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $moduleSeederPath = null;
         if ($moduleClassPrefix !== null) {
-            $moduleSeederPath = $seedersRoot;
-            if ($modulePath !== null) {
-                $moduleSeederPath .= '/' . $modulePath;
-            }
-            $moduleSeederPath .= '/' . $moduleClassPrefix . 'Seeder.php';
+            $moduleSeederPath = sprintf('%s/%sSeeder.php', $seedersRoot, $moduleClassPrefix);
         }
 
         return [
@@ -231,15 +224,15 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
-        $module = $blueprint->moduleNamespace();
+        $moduleNamespace = $blueprint->moduleNamespace();
         $baseFactories = trim($options['namespaces']['database']['factories'] ?? 'Database\\Factories\\Domain', '\\');
         $factories = $baseFactories;
         $baseSeeders = trim($options['namespaces']['database']['seeders'] ?? 'Database\\Seeders', '\\');
         $seedersNamespace = $baseSeeders;
 
-        if ($module !== null) {
-            $factories .= '\\' . $module;
-            $seedersNamespace .= '\\' . $module;
+        if ($moduleNamespace !== null) {
+            $factories .= '\\' . $moduleNamespace;
+            $seedersNamespace .= '\\' . $moduleNamespace;
         }
 
         return [
@@ -1226,8 +1219,8 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     private function buildFactoryContext(Blueprint $blueprint, array $namespaces, array $relationsByField): array
     {
-        $entity = Str::studly($blueprint->entity());
-        $moduleNamespace = $blueprint->moduleNamespace();
+    $entity = Str::studly($blueprint->entity());
+    $moduleNamespace = $blueprint->moduleNamespace();
 
         $modelNamespace = trim('App\\Domain', '\\');
         if ($moduleNamespace !== null) {
@@ -1295,7 +1288,7 @@ class DatabaseLayerGenerator implements LayerGenerator
     private function buildSeederContext(Blueprint $blueprint, array $namespaces, array $relationsByField): array
     {
         $entity = Str::studly($blueprint->entity());
-        $moduleClassPrefix = $blueprint->moduleClassPrefix();
+    $moduleClassPrefix = $blueprint->moduleClassPrefix();
         $namespace = $namespaces['seeders_module'] ?? 'Database\\Seeders';
         $modelFqcn = $this->modelFqcn($blueprint);
 
@@ -1359,11 +1352,11 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function modelNamespaceForRelation(Blueprint $blueprint, string $target): string
     {
-        $module = $blueprint->moduleNamespace();
+        $moduleNamespace = $blueprint->moduleNamespace();
         $namespace = 'App\\Domain';
 
-        if ($module !== null) {
-            $namespace .= '\\' . $module;
+        if ($moduleNamespace !== null) {
+            $namespace .= '\\' . $moduleNamespace;
         }
 
         $namespace .= '\\Models\\' . Str::studly($target);
@@ -1538,7 +1531,7 @@ class DatabaseLayerGenerator implements LayerGenerator
             $history['seeders'] = [];
         }
 
-        $moduleKey = $this->moduleKey($blueprint);
+    $moduleKey = $this->moduleKey($blueprint);
     $moduleStudly = $metadata['module_studly'] ?? $blueprint->moduleClassPrefix();
 
         if (! isset($this->refreshedSeederModules[$moduleKey])) {
@@ -2565,4 +2558,5 @@ class DatabaseLayerGenerator implements LayerGenerator
         return (string) $value;
     }
 
+}
 
