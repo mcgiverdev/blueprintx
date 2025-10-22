@@ -11,13 +11,10 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
-use BlueprintX\Support\Concerns\InteractsWithModules;
 use Illuminate\Support\Str;
 
 class InfrastructureLayerGenerator implements LayerGenerator
 {
-    use InteractsWithModules;
-
     public function __construct(private readonly TemplateEngine $templates)
     {
     }
@@ -80,10 +77,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $this->moduleNamespace($blueprint),
-            'module_path' => $this->modulePath($blueprint),
-            'module_segments' => $this->moduleSegments($blueprint),
-            'module_prefix' => $this->moduleClassPrefix($blueprint),
+            'module' => $this->moduleSegment($blueprint),
             'namespaces' => $namespaces,
             'domain' => $domainNamespaces,
             'application' => $applicationNamespaces,
@@ -104,11 +98,11 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['infrastructure'] ?? 'App\\Infrastructure\\Persistence\\Eloquent', '\\');
-        $module = $this->moduleNamespace($blueprint);
+    $module = $this->moduleSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
-            $root .= '\\' . $module;
+            $root .= '\\' . str_replace('/', '\\', $module);
         }
 
         return [
@@ -124,13 +118,13 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['infrastructure'] ?? 'app/Infrastructure/Persistence/Eloquent', '/');
-        $module = $this->modulePath($blueprint);
+    $module = $this->moduleSegment($blueprint);
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
 
         if ($module !== null) {
-            $root .= '/' . $module;
+            $root .= '/' . str_replace('\\', '/', $module);
         }
 
         return [
@@ -145,11 +139,11 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function deriveDomainNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $this->moduleNamespace($blueprint);
+    $module = $this->moduleSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
-            $root .= '\\' . $module;
+            $root .= '\\' . str_replace('/', '\\', $module);
         }
 
         return [
@@ -165,11 +159,11 @@ class InfrastructureLayerGenerator implements LayerGenerator
     private function deriveApplicationNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['application'] ?? 'App\\Application', '\\');
-        $module = $this->moduleNamespace($blueprint);
+    $module = $this->moduleSegment($blueprint);
         $root = $base;
 
         if ($module !== null) {
-            $root .= '\\' . $module;
+            $root .= '\\' . str_replace('/', '\\', $module);
         }
 
         return [
@@ -185,6 +179,29 @@ class InfrastructureLayerGenerator implements LayerGenerator
             'entity_studly' => $entityName,
             'entity_variable' => Str::camel($blueprint->entity()),
         ];
+    }
+
+    private function moduleSegment(Blueprint $blueprint): ?string
+    {
+        $module = $blueprint->module();
+
+        if (! is_string($module) || trim($module) === '') {
+            return null;
+        }
+
+        $normalized = str_replace(['\\', '.'], '/', $module);
+        $segments = array_filter(
+            array_map('trim', explode('/', $normalized)),
+            static fn (string $segment): bool => $segment !== ''
+        );
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
+
+        return implode('/', $studlySegments);
     }
 
     private function deriveModelContext(Blueprint $blueprint, array $domainNamespaces): array

@@ -10,14 +10,11 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
-use BlueprintX\Support\Concerns\InteractsWithModules;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
 class DatabaseLayerGenerator implements LayerGenerator
 {
-    use InteractsWithModules;
-
     private ?array $history = null;
 
     private ?string $lastGeneratedTimestamp = null;
@@ -163,19 +160,14 @@ class DatabaseLayerGenerator implements LayerGenerator
             'options' => $blueprint->options(),
         ];
 
-        $moduleNamespace = $this->moduleNamespace($blueprint);
-        $modulePath = $this->modulePath($blueprint);
-        $moduleSegments = $this->moduleSegments($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $namespaces = $this->deriveNamespaces($blueprint, $options);
         $relationsByField = $this->indexRelationsByField($blueprint);
 
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $moduleNamespace,
-            'module_path' => $modulePath,
-            'module_segments' => $moduleSegments,
-            'module_prefix' => $this->moduleClassPrefix($blueprint),
+            'module' => $module,
             'namespaces' => $namespaces,
             'driver' => [
                 'name' => $driver->name(),
@@ -195,7 +187,7 @@ class DatabaseLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $entity = Str::studly($blueprint->entity());
-        $module = $this->modulePath($blueprint);
+        $module = $this->moduleSegment($blueprint);
 
         $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
         $factoriesRoot = rtrim($options['paths']['database']['factories'] ?? 'database/factories/Domain', '/');
@@ -205,19 +197,19 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $factoryPath = $factoriesRoot;
         if ($module !== null) {
-            $factoryPath .= '/' . $module;
+            $factoryPath .= '/' . str_replace('\\', '/', $module);
         }
         $factoryPath .= '/Models/' . $entity . 'Factory.php';
 
         $seederPath = $seedersRoot;
         if ($module !== null) {
-            $seederPath .= '/' . $module;
+            $seederPath .= '/' . str_replace('\\', '/', $module);
         }
         $seederPath .= '/' . $entity . 'Seeder.php';
 
         $moduleSeederPath = null;
         if ($module !== null) {
-            $moduleSeederPath = $seedersRoot . '/' . $module . 'Seeder.php';
+            $moduleSeederPath = $seedersRoot . '/' . str_replace('\\', '/', $module) . 'Seeder.php';
         }
 
         return [
@@ -234,15 +226,16 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
-        $module = $this->moduleNamespace($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $baseFactories = trim($options['namespaces']['database']['factories'] ?? 'Database\\Factories\\Domain', '\\');
         $factories = $baseFactories;
         $baseSeeders = trim($options['namespaces']['database']['seeders'] ?? 'Database\\Seeders', '\\');
         $seedersNamespace = $baseSeeders;
 
         if ($module !== null) {
-            $factories .= '\\' . $module;
-            $seedersNamespace .= '\\' . $module;
+            $normalizedModuleNamespace = str_replace('/', '\\', $module);
+            $factories .= '\\' . $normalizedModuleNamespace;
+            $seedersNamespace .= '\\' . $normalizedModuleNamespace;
         }
 
         return [
@@ -1229,12 +1222,12 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     private function buildFactoryContext(Blueprint $blueprint, array $namespaces, array $relationsByField): array
     {
-    $entity = Str::studly($blueprint->entity());
-    $moduleNamespace = $this->moduleNamespace($blueprint);
+        $entity = Str::studly($blueprint->entity());
+        $moduleNamespace = $this->moduleSegment($blueprint);
 
         $modelNamespace = trim('App\\Domain', '\\');
         if ($moduleNamespace !== null) {
-            $modelNamespace .= '\\' . $moduleNamespace;
+            $modelNamespace .= '\\' . str_replace('/', '\\', $moduleNamespace);
         }
         $modelNamespace .= '\\Models\\' . $entity;
 
@@ -1297,9 +1290,8 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     private function buildSeederContext(Blueprint $blueprint, array $namespaces, array $relationsByField): array
     {
-    $entity = Str::studly($blueprint->entity());
-    $moduleStudly = $this->moduleClassPrefix($blueprint);
-    $moduleStudly = $moduleStudly !== '' ? $moduleStudly : null;
+        $entity = Str::studly($blueprint->entity());
+        $moduleSegment = $this->moduleSegment($blueprint);
         $namespace = $namespaces['seeders_module'] ?? 'Database\\Seeders';
         $modelFqcn = $this->modelFqcn($blueprint);
 
@@ -1336,7 +1328,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $metadata = [
             'entity' => $entity,
-            'module_studly' => $moduleStudly,
+            'module_studly' => $moduleSegment !== null ? str_replace(['/', '\\'], '', $moduleSegment) : null,
             'model_fqcn' => $modelFqcn,
             'count' => $count,
             'dependencies' => $dependencies,
@@ -1350,12 +1342,12 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function modelFqcn(Blueprint $blueprint): string
     {
-    $entity = Str::studly($blueprint->entity());
-    $moduleNamespace = $this->moduleNamespace($blueprint);
+        $entity = Str::studly($blueprint->entity());
+        $moduleNamespace = $this->moduleSegment($blueprint);
 
         $namespace = 'App\\Domain';
         if ($moduleNamespace !== null) {
-            $namespace .= '\\' . $moduleNamespace;
+            $namespace .= '\\' . str_replace('/', '\\', $moduleNamespace);
         }
 
         return $namespace . '\\Models\\' . $entity;
@@ -1363,11 +1355,11 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function modelNamespaceForRelation(Blueprint $blueprint, string $target): string
     {
-    $module = $this->moduleNamespace($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $namespace = 'App\\Domain';
 
         if ($module !== null) {
-            $namespace .= '\\' . $module;
+            $namespace .= '\\' . str_replace('/', '\\', $module);
         }
 
         $namespace .= '\\Models\\' . Str::studly($target);
@@ -1543,7 +1535,10 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         $moduleKey = $this->moduleKey($blueprint);
-    $moduleStudly = $metadata['module_studly'] ?? $this->moduleClassPrefix($blueprint);
+        $moduleStudly = $metadata['module_studly'] ?? $this->moduleSegment($blueprint);
+        if (is_string($moduleStudly)) {
+            $moduleStudly = str_replace(['/', '\\'], '', $moduleStudly);
+        }
 
         if (! isset($this->refreshedSeederModules[$moduleKey])) {
             if (isset($history['seeders'][$moduleKey]) && is_array($history['seeders'][$moduleKey])) {
@@ -1708,7 +1703,10 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         $imports = array_values(array_unique($imports));
-    $moduleStudly = $moduleData['module_studly'] ?? $this->moduleClassPrefix($blueprint);
+        $moduleStudly = $moduleData['module_studly'] ?? $this->moduleSegment($blueprint);
+        if (is_string($moduleStudly)) {
+            $moduleStudly = str_replace(['/', '\\'], '', $moduleStudly);
+        }
 
         if (! is_string($moduleStudly) || $moduleStudly === '') {
             return null;
@@ -1802,6 +1800,9 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
 
             $moduleStudly = $moduleData['module_studly'] ?? null;
+            if (is_string($moduleStudly)) {
+                $moduleStudly = str_replace(['/', '\\'], '', $moduleStudly);
+            }
             $entities = $moduleData['entities'] ?? [];
 
             if (! is_string($moduleStudly) || $moduleStudly === '' || ! is_array($entities) || $entities === []) {
@@ -2569,4 +2570,27 @@ class DatabaseLayerGenerator implements LayerGenerator
         return (string) $value;
     }
 
+    private function moduleSegment(Blueprint $blueprint): ?string
+    {
+        $module = $blueprint->module();
+
+        if (! is_string($module) || trim($module) === '') {
+            return null;
+        }
+
+        $normalized = str_replace(['\\', '.'], '/', $module);
+        $segments = array_filter(
+            array_map('trim', explode('/', $normalized)),
+            static fn (string $segment): bool => $segment !== ''
+        );
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
+
+        return implode('/', $studlySegments);
+    }
+}
 

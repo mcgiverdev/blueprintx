@@ -805,21 +805,10 @@ class AuthScaffoldingCreator
             return null;
         }
 
-        if (! is_string($module) || $module === '') {
-            $module = 'Shared';
-        }
-
-        $moduleSegments = array_filter(
-            array_map('trim', preg_split('/[\\\\\/]+/', (string) $module) ?: []),
-            static fn (string $segment): bool => $segment !== ''
-        );
-
-        $moduleSegment = $moduleSegments === []
-            ? 'Shared'
-            : implode('\', array_map(static fn (string $segment): string => Str::studly($segment), $moduleSegments));
+        $moduleNamespace = $this->normalizeModuleNamespace($module) ?? 'Shared';
         $entitySegment = Str::studly($entity);
 
-        return sprintf('App\\Domain\\%s\\Models\\%s', $moduleSegment, $entitySegment);
+        return sprintf('App\\Domain\\%s\\Models\\%s', $moduleNamespace, $entitySegment);
     }
 
     private function deriveDomainAlias(string $domainFqn): string
@@ -844,6 +833,27 @@ class AuthScaffoldingCreator
         $normalized = str_replace(["\r\n", "\r"], "\n", $contents);
 
         return trim($normalized);
+    }
+
+    private function normalizeModuleNamespace(mixed $module): ?string
+    {
+        if (! is_string($module) || trim($module) === '') {
+            return null;
+        }
+
+        $normalized = str_replace(['\\', '.'], '/', $module);
+        $parts = array_filter(
+            array_map('trim', explode('/', $normalized)),
+            static fn (string $segment): bool => $segment !== ''
+        );
+
+        if ($parts === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $parts);
+
+        return implode('\\', $studlySegments);
     }
 
     private function ensureSanctumGuide(string $architecture, bool $sanctumInstalled, bool $force, bool $dryRun): void

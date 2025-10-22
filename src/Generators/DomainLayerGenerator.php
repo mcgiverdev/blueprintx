@@ -11,13 +11,10 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
-use BlueprintX\Support\Concerns\InteractsWithModules;
 use Illuminate\Support\Str;
 
 class DomainLayerGenerator implements LayerGenerator
 {
-    use InteractsWithModules;
-
     public function __construct(private readonly TemplateEngine $templates)
     {
     }
@@ -120,10 +117,7 @@ class DomainLayerGenerator implements LayerGenerator
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
-            'module' => $this->moduleNamespace($blueprint),
-            'module_path' => $this->modulePath($blueprint),
-            'module_segments' => $this->moduleSegments($blueprint),
-            'module_prefix' => $this->moduleClassPrefix($blueprint),
+            'module' => $this->moduleSegment($blueprint),
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'model' => $this->deriveModelContext($blueprint, $namespaces),
@@ -145,11 +139,11 @@ class DomainLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-        $module = $this->moduleNamespace($blueprint);
+    $module = $this->moduleSegment($blueprint);
         $domainRoot = $base;
 
         if ($module !== null) {
-            $domainRoot .= '\\' . $module;
+            $domainRoot .= '\\' . str_replace('/', '\\', $module);
         }
 
         $sharedBase = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
@@ -171,13 +165,13 @@ class DomainLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
-        $module = $this->modulePath($blueprint);
+    $module = $this->moduleSegment($blueprint);
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
 
         if ($module !== null) {
-            $root .= '/' . $module;
+            $root .= '/' . str_replace('\\', '/', $module);
         }
 
         $sharedRootPath = sprintf('%s/Shared/Exceptions', $basePath);
@@ -191,6 +185,29 @@ class DomainLayerGenerator implements LayerGenerator
             'shared_domain_conflict_exception' => sprintf('%s/DomainConflictException.php', $sharedRootPath),
             'shared_domain_validation_exception' => sprintf('%s/DomainValidationException.php', $sharedRootPath),
         ];
+    }
+
+    private function moduleSegment(Blueprint $blueprint): ?string
+    {
+        $module = $blueprint->module();
+
+        if (! is_string($module) || trim($module) === '') {
+            return null;
+        }
+
+        $normalized = str_replace(['\\', '.'], '/', $module);
+        $segments = array_filter(
+            array_map('trim', explode('/', $normalized)),
+            static fn (string $segment): bool => $segment !== ''
+        );
+
+        if ($segments === []) {
+            return null;
+        }
+
+        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
+
+        return implode('/', $studlySegments);
     }
 
     private function namingContext(Blueprint $blueprint): array

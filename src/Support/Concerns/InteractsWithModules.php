@@ -14,17 +14,17 @@ trait InteractsWithModules
     {
         $module = $blueprint->module();
 
-        if ($module === null || trim($module) === '') {
+        if (! is_string($module) || trim($module) === '') {
             return [];
         }
 
         $normalized = str_replace(['\\', '.'], '/', $module);
-        $segments = array_filter(
+        $parts = array_filter(
             array_map('trim', explode('/', $normalized)),
             static fn (string $segment): bool => $segment !== ''
         );
 
-        return array_map(static fn (string $segment): string => Str::studly($segment), $segments);
+        return array_map(static fn (string $segment): string => Str::studly($segment), $parts);
     }
 
     private function moduleNamespace(Blueprint $blueprint): ?string
@@ -43,6 +43,8 @@ trait InteractsWithModules
 
     private function moduleClassPrefix(Blueprint $blueprint): string
     {
-        return implode('', $this->moduleSegments($blueprint));
+        $segments = $this->moduleSegments($blueprint);
+
+        return $segments === [] ? '' : implode('', $segments);
     }
 }

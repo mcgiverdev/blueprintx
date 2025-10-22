@@ -9,19 +9,16 @@ use BlueprintX\Docs\OpenApiDocumentBuilder;
 use BlueprintX\Docs\OpenApi31;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
-use BlueprintX\Support\Concerns\InteractsWithModules;
-use Illuminate\Support\Str;
 use JsonException;
 use JsonSchema\Constraints\Constraint;
 use JsonSchema\Validator;
+use Illuminate\Support\Str;
 use Symfony\Component\Yaml\Yaml;
 use Throwable;
 use cebe\openapi\Reader;
 
 class DocsLayerGenerator implements LayerGenerator
 {
-    use InteractsWithModules;
-
     private ?string $schemaPath;
     private string $validationMode;
 
@@ -98,15 +95,42 @@ class DocsLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = $options['paths']['docs'] ?? 'docs';
-        $module = $this->modulePath($blueprint);
+        $modulePath = $this->modulePath($blueprint);
 
-        if ($module !== null) {
-            $basePath .= '/' . $module;
+        if ($modulePath !== null) {
+            $basePath .= '/' . $modulePath;
         }
 
         $entityName = Str::studly($blueprint->entity());
 
         return sprintf('%s/%s.openapi.yaml', trim($basePath, '/'), $entityName);
+    }
+
+    /**
+     * @return string[]
+     */
+    private function moduleSegments(Blueprint $blueprint): array
+    {
+        $module = $blueprint->module();
+
+        if (! is_string($module) || trim($module) === '') {
+            return [];
+        }
+
+        $normalized = str_replace(['\\', '.'], '/', $module);
+        $parts = array_filter(
+            array_map('trim', explode('/', $normalized)),
+            static fn (string $segment): bool => $segment !== ''
+        );
+
+        return array_map(static fn (string $segment): string => Str::studly($segment), $parts);
+    }
+
+    private function modulePath(Blueprint $blueprint): ?string
+    {
+        $segments = $this->moduleSegments($blueprint);
+
+        return $segments === [] ? null : implode('/', $segments);
     }
 
     /**
