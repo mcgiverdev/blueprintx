@@ -61,6 +61,29 @@ metadata:
 
 BlueprintX calcula la ruta del archivo a partir de `module` y `entity`, pero el campo `path` también puede rellenarse al generar bluprints programáticamente.
 
+### Tenancy (`tenancy`)
+
+Declara explícitamente cómo debe comportarse el módulo frente a contextos multi-tenant. Si se omite, BlueprintX infiere `mode: central` basándose en la convención de carpetas (`central/`, `tenant/`, `shared/`).
+
+```yaml
+tenancy:
+  mode: tenant       # central | tenant | shared
+  storage: both      # central | tenant | both
+  connection: tenant # nombre de la conexión Laravel a usar
+  routing_scope: tenant # central | tenant | both (agrupa rutas generadas)
+  seed_scope: central   # central | tenant | both (seeders / fixtures)
+```
+
+| Clave | Opciones | Descripción |
+|-------|----------|-------------|
+| `mode` | `central`, `tenant`, `shared` | Indica el contexto principal del módulo para habilitar plantillas, scopes y políticas adecuadas. `shared` se reserva para módulos híbridos. |
+| `storage` | `central`, `tenant`, `both` | Define dónde deben escribirse migraciones y modelos generados. `both` crea artefactos duplicados central/tenant cuando las plantillas lo soportan. |
+| `connection` | string | Sobrescribe la conexión Laravel por defecto (`mysql`, `tenant`, etc.). Útil cuando el driver requiere conexiones dedicadas. |
+| `routing_scope` | `central`, `tenant`, `both` | Controla en qué grupos de rutas se registrarán los endpoints generados. |
+| `seed_scope` | `central`, `tenant`, `both` | Determina qué seeders y datos de prueba producir. |
+
+> Consejo: usa `tenancy` sólo cuando necesites anular la convención de carpetas o generar artefactos híbridos (`both`).
+
 ## Campos (`fields`)
 
 La sección `fields` es un arreglo de objetos con esta forma:

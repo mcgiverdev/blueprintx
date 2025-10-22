@@ -30,6 +30,48 @@
     "path": {
       "type": "string"
     },
+    "tenancy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "central",
+            "tenant",
+            "shared"
+          ]
+        },
+        "storage": {
+          "type": "string",
+          "enum": [
+            "central",
+            "tenant",
+            "both"
+          ]
+        },
+        "connection": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "routing_scope": {
+          "type": "string",
+          "enum": [
+            "central",
+            "tenant",
+            "both"
+          ]
+        },
+        "seed_scope": {
+          "type": "string",
+          "enum": [
+            "central",
+            "tenant",
+            "both"
+          ]
+        }
+      }
+    },
     "fields": {
       "type": "array",
       "minItems": 1,

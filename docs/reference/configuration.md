@@ -66,6 +66,26 @@ La sección `features.api` controla cómo se generan controladores, Form Request
 - `controller_traits`: mapea traits que se adjuntan a los controladores (por defecto `HandlesDomainExceptions` y `FormatsPagination`).
 - `optimistic_locking`: agrupa banderas para controlar el bloqueo optimista (cabeceras, columnas, wildcard `*`). Cada bandera puede sobrescribirse vía variables de entorno `BLUEPRINTX_API_OPTIMISTIC_LOCK_*`.
 
+## Características de tenancy
+
+Configura la detección y el driver usado para generar artefactos multi-tenant:
+
+```php
+'features' => [
+    'tenancy' => [
+        'driver' => env('BLUEPRINTX_TENANCY_DRIVER', 'none'), // none, stancl, custom
+        'auto_detect' => env('BLUEPRINTX_TENANCY_AUTO_DETECT', true),
+        'middleware_alias' => env('BLUEPRINTX_TENANCY_MIDDLEWARE', 'tenancy'),
+    ],
+],
+```
+
+- `driver`: `stancl`, `custom` o `none`. Cuando es `none`, el generador ignora artefactos tenant-aware aunque se detecte la librería.
+- `auto_detect`: si está en `true`, BlueprintX detecta `stancl/tenancy` en `composer.lock` y configura el driver automáticamente.
+- `middleware_alias`: alias que se inyectará en las rutas y controladores tenant-aware.
+
+El modo efectivo (`central`, `tenant`, `shared`) se calcula blueprint por blueprint combinando la convención de carpetas, la sección `tenancy` del YAML y las banderas anteriores.
+
 ## Filtros de consulta compartidos
 
 BlueprintX genera `App\Application\Shared\Filters\QueryFilter`, una clase abstracta pensada para centralizar filtros reutilizables:
