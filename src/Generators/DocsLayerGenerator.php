@@ -95,42 +95,15 @@ class DocsLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = $options['paths']['docs'] ?? 'docs';
-        $modulePath = $this->modulePath($blueprint);
+        $module = $blueprint->module();
 
-        if ($modulePath !== null) {
-            $basePath .= '/' . $modulePath;
+        if ($module !== null && $module !== '') {
+            $basePath .= '/' . Str::studly($module);
         }
 
         $entityName = Str::studly($blueprint->entity());
 
         return sprintf('%s/%s.openapi.yaml', trim($basePath, '/'), $entityName);
-    }
-
-    /**
-     * @return string[]
-     */
-    private function moduleSegments(Blueprint $blueprint): array
-    {
-        $module = $blueprint->module();
-
-        if (! is_string($module) || trim($module) === '') {
-            return [];
-        }
-
-        $normalized = str_replace(['\\', '.'], '/', $module);
-        $parts = array_filter(
-            array_map('trim', explode('/', $normalized)),
-            static fn (string $segment): bool => $segment !== ''
-        );
-
-        return array_map(static fn (string $segment): string => Str::studly($segment), $parts);
-    }
-
-    private function modulePath(Blueprint $blueprint): ?string
-    {
-        $segments = $this->moduleSegments($blueprint);
-
-        return $segments === [] ? null : implode('/', $segments);
     }
 
     /**

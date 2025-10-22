@@ -139,11 +139,11 @@ class DomainLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = trim($options['namespaces']['domain'] ?? 'App\\Domain', '\\');
-    $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $domainRoot = $base;
 
         if ($module !== null) {
-            $domainRoot .= '\\' . str_replace('/', '\\', $module);
+            $domainRoot .= '\\' . $module;
         }
 
         $sharedBase = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
@@ -165,13 +165,13 @@ class DomainLayerGenerator implements LayerGenerator
     private function derivePaths(Blueprint $blueprint, array $options): array
     {
         $basePath = rtrim($options['paths']['domain'] ?? 'app/Domain', '/');
-    $module = $this->moduleSegment($blueprint);
+        $module = $this->moduleSegment($blueprint);
         $entityName = Str::studly($blueprint->entity());
 
         $root = $basePath;
 
         if ($module !== null) {
-            $root .= '/' . str_replace('\\', '/', $module);
+            $root .= '/' . $module;
         }
 
         $sharedRootPath = sprintf('%s/Shared/Exceptions', $basePath);
@@ -191,23 +191,11 @@ class DomainLayerGenerator implements LayerGenerator
     {
         $module = $blueprint->module();
 
-        if (! is_string($module) || trim($module) === '') {
+        if ($module === null || $module === '') {
             return null;
         }
 
-        $normalized = str_replace(['\\', '.'], '/', $module);
-        $segments = array_filter(
-            array_map('trim', explode('/', $normalized)),
-            static fn (string $segment): bool => $segment !== ''
-        );
-
-        if ($segments === []) {
-            return null;
-        }
-
-        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
-
-        return implode('/', $studlySegments);
+        return Str::studly($module);
     }
 
     private function namingContext(Blueprint $blueprint): array

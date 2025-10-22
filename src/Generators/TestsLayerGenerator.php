@@ -115,10 +115,10 @@ class TestsLayerGenerator implements LayerGenerator
     private function deriveNamespaces(Blueprint $blueprint, array $options): array
     {
         $base = $options['namespaces']['tests'] ?? 'Tests\\Feature';
-        $moduleNamespace = $this->moduleNamespace($blueprint);
+        $module = $blueprint->module();
 
-        if ($moduleNamespace !== null) {
-            $base .= '\\' . $moduleNamespace;
+        if ($module !== null && $module !== '') {
+            $base .= '\\' . Str::studly($module);
         }
 
         return [
@@ -132,10 +132,10 @@ class TestsLayerGenerator implements LayerGenerator
     private function buildPath(Blueprint $blueprint, array $options): string
     {
         $basePath = $options['paths']['tests'] ?? 'tests/Feature';
-        $modulePath = $this->modulePath($blueprint);
+        $module = $blueprint->module();
 
-        if ($modulePath !== null) {
-            $basePath .= '/' . $modulePath;
+        if ($module !== null && $module !== '') {
+            $basePath .= '/' . Str::studly($module);
         }
 
         $entityName = Str::studly($blueprint->entity());
@@ -155,10 +155,12 @@ class TestsLayerGenerator implements LayerGenerator
 
     private function resolveModelClass(Blueprint $blueprint): string
     {
-        $moduleNamespace = $this->moduleNamespace($blueprint);
-        $prefix = $moduleNamespace !== null ? $moduleNamespace . '\\' : '';
+        $module = $blueprint->module();
+        $moduleNamespace = $module !== null && $module !== ''
+            ? Str::studly($module) . '\\'
+            : '';
 
-        return sprintf('App\\Domain\\%sModels\\%s', $prefix, Str::studly($blueprint->entity()));
+        return sprintf('App\\Domain\\%sModels\\%s', $moduleNamespace, Str::studly($blueprint->entity()));
     }
 
     private function deriveModelContext(Blueprint $blueprint): array
@@ -201,40 +203,6 @@ class TestsLayerGenerator implements LayerGenerator
         $resource = Str::kebab(Str::pluralStudly($blueprint->entity()));
 
         return '/' . $resource;
-    }
-
-    /**
-     * @return string[]
-     */
-    private function moduleSegments(Blueprint $blueprint): array
-    {
-        $module = $blueprint->module();
-
-        if (! is_string($module) || trim($module) === '') {
-            return [];
-        }
-
-        $normalized = str_replace(['\\', '.'], '/', $module);
-        $parts = array_filter(
-            array_map('trim', explode('/', $normalized)),
-            static fn (string $segment): bool => $segment !== ''
-        );
-
-        return array_map(static fn (string $segment): string => Str::studly($segment), $parts);
-    }
-
-    private function moduleNamespace(Blueprint $blueprint): ?string
-    {
-        $segments = $this->moduleSegments($blueprint);
-
-        return $segments === [] ? null : implode('\\', $segments);
-    }
-
-    private function modulePath(Blueprint $blueprint): ?string
-    {
-        $segments = $this->moduleSegments($blueprint);
-
-        return $segments === [] ? null : implode('/', $segments);
     }
 
     private function resolveApiResourceRoute(Blueprint $blueprint): string

@@ -204,7 +204,7 @@ class ApiLayerGenerator implements LayerGenerator
         $root = $base;
 
         if ($module !== null) {
-            $root .= '\\' . str_replace('/', '\\', $module);
+            $root .= '\\' . $module;
         }
 
         return [
@@ -236,7 +236,7 @@ class ApiLayerGenerator implements LayerGenerator
         $root = $basePath;
 
         if ($module !== null) {
-            $root .= '/' . str_replace('\\', '/', $module);
+            $root .= '/' . $module;
         }
 
         $entityName = Str::studly($blueprint->entity());
@@ -255,7 +255,7 @@ class ApiLayerGenerator implements LayerGenerator
         $root = $base;
 
         if ($module !== null) {
-            $root .= '\\' . str_replace('/', '\\', $module);
+            $root .= '\\' . $module;
         }
 
         return [
@@ -279,23 +279,11 @@ class ApiLayerGenerator implements LayerGenerator
     {
         $module = $blueprint->module();
 
-        if (! is_string($module) || trim($module) === '') {
+        if ($module === null || $module === '') {
             return null;
         }
 
-        $normalized = str_replace(['\\', '.'], '/', $module);
-        $segments = array_filter(
-            array_map('trim', explode('/', $normalized)),
-            static fn (string $segment): bool => $segment !== ''
-        );
-
-        if ($segments === []) {
-            return null;
-        }
-
-        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
-
-        return implode('/', $studlySegments);
+        return Str::studly($module);
     }
 
     private function deriveModelContext(Blueprint $blueprint): array
@@ -702,7 +690,7 @@ class ApiLayerGenerator implements LayerGenerator
         $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
-            $base .= '\\' . str_replace('/', '\\', $module);
+            $base .= '\\' . $module;
         }
 
         return $base;
@@ -719,7 +707,7 @@ class ApiLayerGenerator implements LayerGenerator
         $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
-            $base .= '/' . str_replace('\\', '/', $module);
+            $base .= '/' . $module;
         }
 
         return $base;
@@ -1095,7 +1083,7 @@ class ApiLayerGenerator implements LayerGenerator
         $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
-            $base .= '\\' . str_replace('/', '\\', $module);
+            $base .= '\\' . $module;
         }
 
         return $base;
@@ -1112,7 +1100,7 @@ class ApiLayerGenerator implements LayerGenerator
         $module = $this->moduleSegment($blueprint);
 
         if ($module !== null) {
-            $base .= '/' . str_replace('\\', '/', $module);
+            $base .= '/' . $module;
         }
 
         return trim($base, '/');

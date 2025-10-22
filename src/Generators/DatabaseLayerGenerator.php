@@ -197,19 +197,19 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $factoryPath = $factoriesRoot;
         if ($module !== null) {
-            $factoryPath .= '/' . str_replace('\\', '/', $module);
+            $factoryPath .= '/' . $module;
         }
         $factoryPath .= '/Models/' . $entity . 'Factory.php';
 
         $seederPath = $seedersRoot;
         if ($module !== null) {
-            $seederPath .= '/' . str_replace('\\', '/', $module);
+            $seederPath .= '/' . $module;
         }
         $seederPath .= '/' . $entity . 'Seeder.php';
 
         $moduleSeederPath = null;
         if ($module !== null) {
-            $moduleSeederPath = $seedersRoot . '/' . str_replace('\\', '/', $module) . 'Seeder.php';
+            $moduleSeederPath = $seedersRoot . '/' . $module . 'Seeder.php';
         }
 
         return [
@@ -233,9 +233,8 @@ class DatabaseLayerGenerator implements LayerGenerator
         $seedersNamespace = $baseSeeders;
 
         if ($module !== null) {
-            $normalizedModuleNamespace = str_replace('/', '\\', $module);
-            $factories .= '\\' . $normalizedModuleNamespace;
-            $seedersNamespace .= '\\' . $normalizedModuleNamespace;
+            $factories .= '\\' . $module;
+            $seedersNamespace .= '\\' . $module;
         }
 
         return [
@@ -1227,7 +1226,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $modelNamespace = trim('App\\Domain', '\\');
         if ($moduleNamespace !== null) {
-            $modelNamespace .= '\\' . str_replace('/', '\\', $moduleNamespace);
+            $modelNamespace .= '\\' . $moduleNamespace;
         }
         $modelNamespace .= '\\Models\\' . $entity;
 
@@ -1328,7 +1327,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $metadata = [
             'entity' => $entity,
-            'module_studly' => $moduleSegment !== null ? str_replace(['/', '\\'], '', $moduleSegment) : null,
+            'module_studly' => $moduleSegment,
             'model_fqcn' => $modelFqcn,
             'count' => $count,
             'dependencies' => $dependencies,
@@ -1347,7 +1346,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $namespace = 'App\\Domain';
         if ($moduleNamespace !== null) {
-            $namespace .= '\\' . str_replace('/', '\\', $moduleNamespace);
+            $namespace .= '\\' . $moduleNamespace;
         }
 
         return $namespace . '\\Models\\' . $entity;
@@ -1359,7 +1358,7 @@ class DatabaseLayerGenerator implements LayerGenerator
         $namespace = 'App\\Domain';
 
         if ($module !== null) {
-            $namespace .= '\\' . str_replace('/', '\\', $module);
+            $namespace .= '\\' . $module;
         }
 
         $namespace .= '\\Models\\' . Str::studly($target);
@@ -1536,9 +1535,6 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $moduleKey = $this->moduleKey($blueprint);
         $moduleStudly = $metadata['module_studly'] ?? $this->moduleSegment($blueprint);
-        if (is_string($moduleStudly)) {
-            $moduleStudly = str_replace(['/', '\\'], '', $moduleStudly);
-        }
 
         if (! isset($this->refreshedSeederModules[$moduleKey])) {
             if (isset($history['seeders'][$moduleKey]) && is_array($history['seeders'][$moduleKey])) {
@@ -1704,9 +1700,6 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $imports = array_values(array_unique($imports));
         $moduleStudly = $moduleData['module_studly'] ?? $this->moduleSegment($blueprint);
-        if (is_string($moduleStudly)) {
-            $moduleStudly = str_replace(['/', '\\'], '', $moduleStudly);
-        }
 
         if (! is_string($moduleStudly) || $moduleStudly === '') {
             return null;
@@ -1800,9 +1793,6 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
 
             $moduleStudly = $moduleData['module_studly'] ?? null;
-            if (is_string($moduleStudly)) {
-                $moduleStudly = str_replace(['/', '\\'], '', $moduleStudly);
-            }
             $entities = $moduleData['entities'] ?? [];
 
             if (! is_string($moduleStudly) || $moduleStudly === '' || ! is_array($entities) || $entities === []) {
@@ -2574,23 +2564,11 @@ class DatabaseLayerGenerator implements LayerGenerator
     {
         $module = $blueprint->module();
 
-        if (! is_string($module) || trim($module) === '') {
+        if ($module === null || $module === '') {
             return null;
         }
 
-        $normalized = str_replace(['\\', '.'], '/', $module);
-        $segments = array_filter(
-            array_map('trim', explode('/', $normalized)),
-            static fn (string $segment): bool => $segment !== ''
-        );
-
-        if ($segments === []) {
-            return null;
-        }
-
-        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
-
-        return implode('/', $studlySegments);
+        return Str::studly($module);
     }
 }
 
