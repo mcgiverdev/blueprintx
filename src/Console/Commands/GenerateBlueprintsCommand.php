@@ -280,7 +280,8 @@ SIGNATURE;
                         $relative,
                         $tenancyMode,
                         $tenancyConfiguredDriver,
-                        $tenancyAutoDetect
+                        $tenancyAutoDetect,
+                        $tenancyDrivers
                     );
                 } elseif (! $tenancyDriverInstalled) {
                     $this->renderTenancyDriverInstallReminder(
@@ -757,9 +758,16 @@ SIGNATURE;
         $this->line('    > Establece "features.tenancy.enabled" en true para habilitar la generación multi-tenant.');
     }
 
-    private function renderTenancyDriverNotConfiguredWarning(string $relative, string $mode, string $configuredDriver, bool $autoDetect): void
+    private function renderTenancyDriverNotConfiguredWarning(
+        string $relative,
+        string $mode,
+        ?string $configuredDriver,
+        bool $autoDetect,
+        array $availableDrivers
+    ): void
     {
-        $key = $configuredDriver . ':' . ($autoDetect ? 'auto' : 'manual');
+        $driverKey = $configuredDriver ?? 'null';
+        $key = $driverKey . ':' . ($autoDetect ? 'auto' : 'manual');
 
         if (isset($this->tenancyDriverConfigWarnings[$key])) {
             return;
@@ -775,10 +783,17 @@ SIGNATURE;
             ));
             $this->line('    > Define un driver válido, por ejemplo "stancl", en config/blueprintx.php.');
 
+            $this->queueTenancyDriverSuggestionForConfiguredDriver(
+                $relative,
+                $mode,
+                'stancl',
+                $availableDrivers
+            );
+
             return;
         }
 
-        if ($configuredDriver === 'auto') {
+        if ($configuredDriver === null || $configuredDriver === 'auto') {
             if ($autoDetect) {
                 $this->warn(sprintf(
                     '  [tenancy] No se detectó ningún paquete tenancy instalado para el blueprint "%s" (modo "%s").',
@@ -795,6 +810,14 @@ SIGNATURE;
                 $this->line('    > Activa "features.tenancy.auto_detect" o asigna un driver en "features.tenancy.driver".');
             }
 
+            $this->queueTenancyDriverSuggestionForConfiguredDriver(
+                $relative,
+                $mode,
+                $configuredDriver,
+                $availableDrivers,
+                $autoDetect
+            );
+
             return;
         }
 
@@ -805,6 +828,18 @@ SIGNATURE;
             $mode
         ));
         $this->line('    > Verifica que el driver esté instalado o ajusta "features.tenancy.driver".');
+
+        if ($configuredDriver !== null) {
+            $this->queueTenancyDriverSuggestion(
+                $configuredDriver,
+                $availableDrivers[$configuredDriver]['label'] ?? ucfirst($configuredDriver),
+                $availableDrivers[$configuredDriver]['package'] ?? null,
+                $availableDrivers[$configuredDriver]['install'] ?? [],
+                $availableDrivers[$configuredDriver]['guide_url'] ?? null,
+                $relative,
+                $mode
+            );
+        }
     }
 
     /**
@@ -819,23 +854,90 @@ SIGNATURE;
         array $installCommands,
         ?string $guideUrl
     ): void {
-        $key = $driverKey;
+        $this->queueTenancyDriverSuggestion(
+            $driverKey,
+            $driverLabel,
+            $package,
+            $installCommands,
+            $guideUrl,
+            $relative,
+            $mode
+        );
+    }
 
-        if (! isset($this->tenancyDriverInstallQueue[$key])) {
-            $this->tenancyDriverInstallQueue[$key] = [
+    private function queueTenancyDriverSuggestion(
+        string $driverKey,
+        string $driverLabel,
+        ?string $package,
+        array $installCommands,
+        ?string $guideUrl,
+        string $relative,
+        string $mode
+    ): void {
+        $normalizedCommands = array_values(array_filter(
+            array_map('trim', $installCommands),
+            static fn (string $command): bool => $command !== ''
+        ));
+
+        if (! isset($this->tenancyDriverInstallQueue[$driverKey])) {
+            $this->tenancyDriverInstallQueue[$driverKey] = [
                 'label' => $driverLabel,
                 'package' => $package,
-                'commands' => array_values(array_filter(array_map('trim', $installCommands), static fn (string $command): bool => $command !== '')),
+                'commands' => $normalizedCommands,
                 'guide' => $guideUrl,
                 'blueprints' => [],
             ];
+        } else {
+            if ($package !== null && $this->tenancyDriverInstallQueue[$driverKey]['package'] === null) {
+                $this->tenancyDriverInstallQueue[$driverKey]['package'] = $package;
+            }
+
+            if ($normalizedCommands !== []) {
+                $this->tenancyDriverInstallQueue[$driverKey]['commands'] = $normalizedCommands;
+            }
+
+            if ($guideUrl !== null && $guideUrl !== '' && ($this->tenancyDriverInstallQueue[$driverKey]['guide'] ?? null) === null) {
+                $this->tenancyDriverInstallQueue[$driverKey]['guide'] = $guideUrl;
+            }
         }
 
         $blueprintKey = $relative . '|' . $mode;
-        $this->tenancyDriverInstallQueue[$key]['blueprints'][$blueprintKey] = [
+        $this->tenancyDriverInstallQueue[$driverKey]['blueprints'][$blueprintKey] = [
             'path' => $relative,
             'mode' => $mode,
         ];
+    }
+
+    private function queueTenancyDriverSuggestionForConfiguredDriver(
+        string $relative,
+        string $mode,
+        ?string $configuredDriver,
+        array $availableDrivers,
+        bool $autoDetect = true
+    ): void {
+        $driverKey = null;
+
+        if (is_string($configuredDriver) && $configuredDriver !== '' && ! in_array($configuredDriver, ['none', 'auto'], true)) {
+            $driverKey = $configuredDriver;
+        } elseif ($autoDetect && $availableDrivers !== []) {
+            $driverKey = array_key_first($availableDrivers);
+        }
+
+        if ($driverKey === null || ! isset($availableDrivers[$driverKey])) {
+            return;
+        }
+
+        $config = $availableDrivers[$driverKey];
+
+        $this->queueTenancyDriverSuggestion(
+            $driverKey,
+            $config['label'] ?? ucfirst($driverKey),
+            $config['package'] ?? null,
+            $config['install'] ?? [],
+            $config['guide_url'] ?? null,
+            $relative,
+            $mode
+        );
     }
 
     private function renderTenancyInstallationSuggestions(bool $dryRun): void
