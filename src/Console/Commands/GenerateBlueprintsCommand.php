@@ -18,6 +18,7 @@ use BlueprintX\Validation\ValidationMessage;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Throwable;
+use Symfony\Component\Process\Process;
 
 class GenerateBlueprintsCommand extends Command
 {
@@ -65,9 +66,9 @@ SIGNATURE;
     private array $tenancyDriverConfigWarnings = [];
 
     /**
-     * @var array<string, bool>
+     * @var array<string, array{label:string,package:?string,commands:array<int,string>,guide:?string,blueprints:array<string,array{path:string,mode:string}>}>
      */
-    private array $tenancyMissingDriverWarnings = [];
+    private array $tenancyDriverInstallQueue = [];
 
     private bool $tenancyFeatureDisabledWarning = false;
 
@@ -466,6 +467,8 @@ SIGNATURE;
             implode(' - ', $parts),
         ));
 
+        $this->renderTenancyInstallationSuggestions($dryRun);
+
         if ($hasErrors || $summary['errors'] > 0) {
             return self::FAILURE;
         }
@@ -816,30 +819,128 @@ SIGNATURE;
         array $installCommands,
         ?string $guideUrl
     ): void {
-        if (isset($this->tenancyMissingDriverWarnings[$driverKey])) {
+        $key = $driverKey;
+
+        if (! isset($this->tenancyDriverInstallQueue[$key])) {
+            $this->tenancyDriverInstallQueue[$key] = [
+                'label' => $driverLabel,
+                'package' => $package,
+                'commands' => array_values(array_filter(array_map('trim', $installCommands), static fn (string $command): bool => $command !== '')),
+                'guide' => $guideUrl,
+                'blueprints' => [],
+            ];
+        }
+
+        $blueprintKey = $relative . '|' . $mode;
+        $this->tenancyDriverInstallQueue[$key]['blueprints'][$blueprintKey] = [
+            'path' => $relative,
+            'mode' => $mode,
+        ];
+    }
+
+    private function renderTenancyInstallationSuggestions(bool $dryRun): void
+    {
+        if ($this->tenancyDriverInstallQueue === []) {
             return;
         }
 
-        $this->tenancyMissingDriverWarnings[$driverKey] = true;
+        $this->newLine();
 
-        $this->warn(sprintf(
-            '  [tenancy] El blueprint "%s" (modo "%s") usa el driver "%s", pero no se detectó el paquete requerido.',
-            $relative,
-            $mode,
-            $driverLabel
-        ));
+        foreach ($this->tenancyDriverInstallQueue as $driverKey => $info) {
+            $label = $info['label'];
+            $package = $info['package'];
+            $commands = $info['commands'];
+            $guide = $info['guide'];
+            $blueprints = array_values($info['blueprints']);
 
-        if ($package !== null) {
-            $this->line(sprintf('    > Paquete esperado: %s', $package));
+            $this->warn(sprintf(
+                '[tenancy] Se detectaron blueprints que requieren el driver "%s" pero no está instalado.',
+                $label
+            ));
+
+            foreach ($blueprints as $blueprint) {
+                $this->line(sprintf('  - %s (modo %s)', $blueprint['path'], $blueprint['mode']));
+            }
+
+            if ($package !== null && $package !== '') {
+                $this->line(sprintf('  Paquete recomendado: %s', $package));
+            }
+
+            if ($dryRun || $commands === []) {
+                if ($commands !== []) {
+                    $this->line('  Ejecuta manualmente:');
+                    foreach ($commands as $command) {
+                        $this->line(sprintf('    $ %s', $command));
+                    }
+                }
+
+                if ($guide) {
+                    $this->line(sprintf('  Guía: %s', $guide));
+                }
+
+                if ($dryRun) {
+                    $this->line('  (modo dry-run: no se instalaron dependencias automáticamente)');
+                }
+
+                $this->newLine();
+
+                continue;
+            }
+
+            $shouldInstall = $this->confirm(sprintf('¿Deseas instalar "%s" ahora?', $label), false);
+
+            if (! $shouldInstall) {
+                $this->line('  Ejecuta manualmente:');
+                foreach ($commands as $command) {
+                    $this->line(sprintf('    $ %s', $command));
+                }
+
+                if ($guide) {
+                    $this->line(sprintf('  Guía: %s', $guide));
+                }
+
+                $this->newLine();
+
+                continue;
+            }
+
+            $this->line(sprintf('  Instalando "%s"...', $label));
+            $installed = $this->runTenancyInstallCommands($commands);
+
+            if ($installed) {
+                $this->info(sprintf('  Instalación de "%s" completada.', $label));
+            } else {
+                $this->error(sprintf('  La instalación de "%s" falló. Revisa los comandos anteriores.', $label));
+            }
+
+            if ($guide) {
+                $this->line(sprintf('  Guía: %s', $guide));
+            }
+
+            $this->newLine();
         }
+    }
 
-        foreach ($installCommands as $command) {
+    private function runTenancyInstallCommands(array $commands): bool
+    {
+        $basePath = function_exists('base_path') ? base_path() : getcwd();
+
+        foreach ($commands as $command) {
             $this->line(sprintf('    $ %s', $command));
+
+            $process = Process::fromShellCommandline($command, $basePath ?: null);
+            $process->setTimeout(null);
+
+            $exitCode = $process->run(function ($type, $buffer): void {
+                $this->output->write($buffer);
+            });
+
+            if ($exitCode !== 0) {
+                return false;
+            }
         }
 
-        if ($guideUrl !== null && $guideUrl !== '') {
-            $this->line(sprintf('    Guía: %s', $guideUrl));
-        }
+        return true;
     }
 
     private function isComposerPackageInstalled(string $package): bool
