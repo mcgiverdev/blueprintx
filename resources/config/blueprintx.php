@@ -77,12 +77,17 @@ return [
             'api_prefix' => env('BLUEPRINTX_POSTMAN_API_PREFIX', '/api'),
             'collection_name' => env('BLUEPRINTX_POSTMAN_COLLECTION', 'Generated API'),
             'version' => env('BLUEPRINTX_POSTMAN_VERSION', 'v1'),
+            'tenancy' => [
+                'central_base_url' => env('BLUEPRINTX_POSTMAN_CENTRAL_BASE_URL'),
+                'tenant_base_url' => env('BLUEPRINTX_POSTMAN_TENANT_BASE_URL'),
+            ],
         ],
         'tenancy' => [
             'enabled' => env('BLUEPRINTX_TENANCY_ENABLED', true),
             'driver' => env('BLUEPRINTX_TENANCY_DRIVER', 'auto'),
             'auto_detect' => env('BLUEPRINTX_TENANCY_AUTO_DETECT', true),
             'middleware_alias' => env('BLUEPRINTX_TENANCY_MIDDLEWARE_ALIAS', 'tenant'),
+            'tenant_header' => env('BLUEPRINTX_TENANCY_TENANT_HEADER', 'X-Tenant'),
             'scaffold' => [
                 'enabled' => env('BLUEPRINTX_TENANCY_SCAFFOLD', true),
                 'blueprint_path' => env('BLUEPRINTX_TENANCY_BLUEPRINT_PATH', 'central/tenancy/tenants.yaml'),

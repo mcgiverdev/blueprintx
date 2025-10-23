@@ -90,14 +90,23 @@ class PostmanLayerGenerator implements LayerGenerator
         $baseUrl = $this->sanitizeBaseUrl($baseUrl, $normalizedApiPrefix);
 
         $tenancyOptions = is_array($postmanOptions['tenancy'] ?? null) ? $postmanOptions['tenancy'] : [];
-        $centralBaseUrl = $this->sanitizeBaseUrl(
-            is_string($tenancyOptions['central_base_url'] ?? null) ? (string) $tenancyOptions['central_base_url'] : $baseUrl,
-            $normalizedApiPrefix
-        );
-        $tenantBaseUrl = $this->sanitizeBaseUrl(
-            is_string($tenancyOptions['tenant_base_url'] ?? null) ? (string) $tenancyOptions['tenant_base_url'] : $baseUrl,
-            $normalizedApiPrefix
-        );
+        $centralBaseCandidate = '';
+        if (isset($tenancyOptions['central_base_url']) && is_string($tenancyOptions['central_base_url'])) {
+            $centralBaseCandidate = trim($tenancyOptions['central_base_url']);
+        }
+        if ($centralBaseCandidate === '') {
+            $centralBaseCandidate = $baseUrl;
+        }
+        $centralBaseUrl = $this->sanitizeBaseUrl($centralBaseCandidate, $normalizedApiPrefix, $baseUrl);
+
+        $tenantBaseCandidate = '';
+        if (isset($tenancyOptions['tenant_base_url']) && is_string($tenancyOptions['tenant_base_url'])) {
+            $tenantBaseCandidate = trim($tenancyOptions['tenant_base_url']);
+        }
+        if ($tenantBaseCandidate === '') {
+            $tenantBaseCandidate = $baseUrl;
+        }
+        $tenantBaseUrl = $this->sanitizeBaseUrl($tenantBaseCandidate, $normalizedApiPrefix, $baseUrl);
         $resolvedBaseUrl = $this->resolveBaseUrl($baseUrl, $centralBaseUrl, $tenantBaseUrl);
 
         $collectionNameOption = $postmanOptions['collection_name'] ?? $this->defaultCollectionName;
@@ -425,12 +434,12 @@ class PostmanLayerGenerator implements LayerGenerator
         return is_string($encoded) ? $encoded : '{}';
     }
 
-    private function sanitizeBaseUrl(string $baseUrl, string $normalizedApiPrefix): string
+    private function sanitizeBaseUrl(string $baseUrl, string $normalizedApiPrefix, ?string $fallback = null): string
     {
         $sanitized = trim($baseUrl);
 
         if ($sanitized === '') {
-            $sanitized = $this->defaultBaseUrl;
+            $sanitized = $fallback !== null && $fallback !== '' ? $fallback : $this->defaultBaseUrl;
         }
 
         $sanitized = rtrim($sanitized, '/');
@@ -440,7 +449,9 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         if ($sanitized === '') {
-            return $this->defaultBaseUrl;
+            $fallback = $fallback !== null && $fallback !== '' ? $fallback : $this->defaultBaseUrl;
+
+            return rtrim($fallback, '/');
         }
 
         return $sanitized;

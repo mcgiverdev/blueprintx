@@ -91,6 +91,9 @@ SIGNATURE;
         $defaultPostmanEnabled = (bool) ($postmanFeature['enabled'] ?? false);
         $defaultPostmanBaseUrl = $this->normalizeUrl($postmanFeature['base_url'] ?? null, 'http://localhost');
         $defaultPostmanApiPrefix = $this->normalizeApiPrefixOption($postmanFeature['api_prefix'] ?? null, '/api');
+        $postmanTenancyFeature = isset($postmanFeature['tenancy']) && is_array($postmanFeature['tenancy'])
+            ? $postmanFeature['tenancy']
+            : [];
 
         $pathsConfig = $config['paths'] ?? [];
         $defaultArchitecture = $this->normalizeArchitecture($config['default_architecture'] ?? null, 'hexagonal');
@@ -115,6 +118,9 @@ SIGNATURE;
         $tenancyScaffoldEnabled = $tenancyRuntime['scaffold_enabled'];
         $tenancyBlueprintRelative = $tenancyRuntime['scaffold_blueprint'];
         $tenancyAutoDetect = $tenancyRuntime['auto_detect'];
+        $tenancyTenantHeader = $tenancyRuntime['tenant_header'];
+        $tenancyCentralBaseUrl = $tenancyRuntime['central_base_url'];
+        $tenancyTenantBaseUrl = $tenancyRuntime['tenant_base_url'];
         $tenancyDrivers = $tenancyRuntime['drivers'];
         $tenancyDetectedDriver = $tenancyRuntime['detected_driver'];
         $tenancyDriverLabel = $tenancyRuntime['driver_label']
@@ -135,8 +141,8 @@ SIGNATURE;
             ? (bool) $formRequestFeature['authorize_by_default']
             : true;
 
-    $blueprintsPath = $config['paths']['blueprints'] ?? null;
-    $authModelEntity = $this->resolveAuthModelEntity();
+        $blueprintsPath = $config['paths']['blueprints'] ?? null;
+        $authModelEntity = $this->resolveAuthModelEntity();
 
         if (! is_string($blueprintsPath) || $blueprintsPath === '') {
             $this->error('No se encontro la configuracion "blueprintx.paths.blueprints".');
@@ -178,6 +184,22 @@ SIGNATURE;
         $withOpenApi = $withOpenApiOption ? true : ($withoutOpenApiOption ? false : $defaultOpenApiEnabled);
         $validateOpenApi = $skipOpenApiValidation ? false : ($validateOpenApiOption ? true : $defaultOpenApiValidation);
         $withPostman = $withPostmanOption ? true : ($withoutPostmanOption ? false : $defaultPostmanEnabled);
+
+        $postmanCentralBaseUrl = '';
+        if (isset($postmanTenancyFeature['central_base_url']) && is_string($postmanTenancyFeature['central_base_url'])) {
+            $postmanCentralBaseUrl = rtrim(trim($postmanTenancyFeature['central_base_url']), '/');
+        }
+        if ($postmanCentralBaseUrl === '') {
+            $postmanCentralBaseUrl = $tenancyCentralBaseUrl;
+        }
+
+        $postmanTenantBaseUrl = '';
+        if (isset($postmanTenancyFeature['tenant_base_url']) && is_string($postmanTenancyFeature['tenant_base_url'])) {
+            $postmanTenantBaseUrl = rtrim(trim($postmanTenancyFeature['tenant_base_url']), '/');
+        }
+        if ($postmanTenantBaseUrl === '') {
+            $postmanTenantBaseUrl = $tenancyTenantBaseUrl;
+        }
 
         $blueprintPaths = $this->locator->discover($blueprintsPath, $module, $entity);
 
@@ -315,6 +337,11 @@ SIGNATURE;
                 'postman' => [
                     'base_url' => $defaultPostmanBaseUrl,
                     'api_prefix' => $defaultPostmanApiPrefix,
+                    'tenancy' => [
+                        'central_base_url' => $postmanCentralBaseUrl,
+                        'tenant_base_url' => $postmanTenantBaseUrl,
+                        'tenant_header' => $tenancyTenantHeader,
+                    ],
                 ],
                 'form_requests' => [
                     'enabled' => $formRequestsEnabled,
@@ -341,6 +368,9 @@ SIGNATURE;
                     'detected_driver_label' => $tenancyDetectedDriverLabel,
                     'blueprint_mode' => $tenancyMode,
                     'requires_driver' => $blueprintRequiresTenancyDriver,
+                    'tenant_header' => $tenancyTenantHeader,
+                    'central_base_url' => $tenancyCentralBaseUrl,
+                    'tenant_base_url' => $tenancyTenantBaseUrl,
                 ],
             ];
 
@@ -510,7 +540,10 @@ SIGNATURE;
      *     middleware_alias:string,
      *     scaffold_enabled:bool,
      *     scaffold_blueprint:string,
-     *     auto_detect:bool,
+    *     auto_detect:bool,
+    *     tenant_header:string,
+    *     central_base_url:string,
+    *     tenant_base_url:string,
      *     drivers:array<string, array{label:string,package:?string,install:array<int,string>,guide_url:?string}>,
      *     detected_driver:?string
      * }
@@ -534,6 +567,26 @@ SIGNATURE;
 
         if ($middlewareAlias === '') {
             $middlewareAlias = 'tenant';
+        }
+
+        $tenantHeader = isset($config['tenant_header']) && is_string($config['tenant_header'])
+            ? trim($config['tenant_header'])
+            : (isset($config['header']) && is_string($config['header']) ? trim($config['header']) : 'X-Tenant');
+
+        if ($tenantHeader === '') {
+            $tenantHeader = 'X-Tenant';
+        }
+
+        $centralBaseUrl = '';
+
+        if (isset($config['central_base_url']) && is_string($config['central_base_url'])) {
+            $centralBaseUrl = rtrim(trim($config['central_base_url']), '/');
+        }
+
+        $tenantBaseUrl = '';
+
+        if (isset($config['tenant_base_url']) && is_string($config['tenant_base_url'])) {
+            $tenantBaseUrl = rtrim(trim($config['tenant_base_url']), '/');
         }
 
         $scaffoldConfig = isset($config['scaffold']) && is_array($config['scaffold'])
@@ -645,6 +698,9 @@ SIGNATURE;
             'scaffold_enabled' => $scaffoldEnabled,
             'scaffold_blueprint' => $scaffoldBlueprint,
             'auto_detect' => $autoDetect,
+            'tenant_header' => $tenantHeader,
+            'central_base_url' => $centralBaseUrl,
+            'tenant_base_url' => $tenantBaseUrl,
             'drivers' => $drivers,
             'detected_driver' => $detectedDriver,
         ];
