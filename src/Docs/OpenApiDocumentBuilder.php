@@ -7,6 +7,7 @@ use BlueprintX\Blueprint\Endpoint;
 use BlueprintX\Blueprint\Field;
 use BlueprintX\Contracts\BlueprintParser;
 use BlueprintX\Kernel\BlueprintLocator;
+use BlueprintX\Support\Tenancy\BlueprintTenancyContext;
 use Illuminate\Support\Str;
 use stdClass;
 use Throwable;
@@ -28,22 +29,29 @@ class OpenApiDocumentBuilder
      */
     private array $relatedBlueprintCache = [];
 
+    private ?BlueprintTenancyContext $tenancyContext = null;
+
     public function __construct(
         private readonly ?BlueprintParser $parser = null,
         private readonly ?BlueprintLocator $locator = null,
     ) {
     }
 
-    public function build(Blueprint $blueprint): array
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function build(Blueprint $blueprint, array $options = []): array
     {
         $this->additionalSchemas = [];
         $this->relatedSchemaCache = [];
         $this->relatedBlueprintCache = [];
+        $this->tenancyContext = BlueprintTenancyContext::fromBlueprint($blueprint, $options);
 
         $entityName = Str::studly($blueprint->entity());
         $tags = $this->resolveTags($blueprint, $entityName);
 
         $paths = $this->buildPaths($blueprint, $entityName, $tags[0] ?? $entityName);
+        $paths = $this->applyTenancyToPaths($paths);
 
         $schemas = $this->buildSchemas($blueprint, $entityName);
 
@@ -63,6 +71,19 @@ class OpenApiDocumentBuilder
             'components' => $this->buildComponents($schemas),
             'x-domain-errors' => $this->buildDomainErrorCatalog($blueprint, $entityName),
         ];
+
+        if ($servers = $this->buildServers()) {
+            $document['servers'] = $servers;
+        }
+
+        if ($this->tenancyContext !== null) {
+            $document['x-tenancy'] = [
+                'mode' => $this->tenancyContext->mode,
+                'routing' => $this->tenancyContext->routingScope,
+                'storage' => $this->tenancyContext->storage,
+                'tenant_header' => $this->tenancyContext->tenantHeader,
+            ];
+        }
 
         return $this->filterRecursive($document);
     }
@@ -719,6 +740,43 @@ class OpenApiDocumentBuilder
         return $paths;
     }
 
+    /**
+     * @param array<string, array<string, mixed>> $paths
+     * @return array<string, array<string, mixed>>
+     */
+    private function applyTenancyToPaths(array $paths): array
+    {
+        if ($this->tenancyContext === null || ! $this->tenancyContext->appliesToTenant) {
+            return $paths;
+        }
+
+        foreach ($paths as $path => $operations) {
+            if (! is_array($operations)) {
+                continue;
+            }
+
+            foreach ($operations as $method => $operation) {
+                if (! is_array($operation)) {
+                    continue;
+                }
+
+                $parameters = $operation['parameters'] ?? [];
+
+                if (! is_array($parameters)) {
+                    $parameters = [];
+                }
+
+                $operation['parameters'] = $this->appendTenantHeaderParameter($parameters);
+
+                $operations[$method] = $operation;
+            }
+
+            $paths[$path] = $operations;
+        }
+
+        return $paths;
+    }
+
     private function buildCrudCollectionOperations(string $entityName, string $tag): array
     {
         return [
@@ -835,15 +893,49 @@ class OpenApiDocumentBuilder
 
     private function buildComponents(array $schemas): array
     {
+        $parameters = [
+            'IfMatchHeader' => $this->buildIfMatchHeaderComponent(),
+        ];
+
+        if ($this->tenancyContext !== null && $this->tenancyContext->appliesToTenant) {
+            $parameters['TenantHeader'] = $this->buildTenantHeaderComponent($this->tenancyContext->tenantHeader);
+        }
+
         return [
             'schemas' => $schemas,
-            'parameters' => [
-                'IfMatchHeader' => $this->buildIfMatchHeaderComponent(),
-            ],
+            'parameters' => $parameters,
             'headers' => [
                 'ETag' => $this->buildEtagHeaderComponent(),
             ],
         ];
+    }
+
+    private function buildServers(): array
+    {
+        if ($this->tenancyContext === null) {
+            return [];
+        }
+
+        $servers = [];
+
+        if ($this->tenancyContext->appliesToCentral) {
+            $servers[] = [
+                'url' => '{{central_base_url}}',
+                'description' => 'Host central para rutas de alcance global.',
+                'x-scope' => 'central',
+            ];
+        }
+
+        if ($this->tenancyContext->appliesToTenant) {
+            $servers[] = [
+                'url' => '{{tenant_base_url}}',
+                'description' => 'Host tenant. Incluya el encabezado ' . $this->tenancyContext->tenantHeader . ' en cada solicitud.',
+                'x-scope' => 'tenant',
+                'x-tenant-header' => $this->tenancyContext->tenantHeader,
+            ];
+        }
+
+        return $servers;
     }
 
     private function buildEtagHeaderComponent(): array
@@ -877,6 +969,22 @@ class OpenApiDocumentBuilder
         ];
     }
 
+    private function buildTenantHeaderComponent(string $headerName): array
+    {
+        $required = $this->tenancyContext !== null && $this->tenancyContext->routingScope === 'tenant';
+
+        return [
+            'name' => $headerName,
+            'in' => 'header',
+            'required' => $required,
+            'description' => $required
+                ? 'Identificador del tenant requerido para las rutas multi-tenant.'
+                : 'Identificador del tenant. Requerido cuando la ruta se ejecuta en contexto tenant.',
+            'schema' => ['type' => 'string'],
+            'example' => '{{tenant_id}}',
+        ];
+    }
+
     private function buildDomainErrorResponse(string $description, string $errorCode, ?array $example = null): array
     {
         $response = [
@@ -894,6 +1002,35 @@ class OpenApiDocumentBuilder
         }
 
         return $response;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $parameters
+     * @return array<int, array<string, mixed>>
+     */
+    private function appendTenantHeaderParameter(array $parameters): array
+    {
+        if ($this->tenancyContext === null || ! $this->tenancyContext->appliesToTenant) {
+            return $parameters;
+        }
+
+        foreach ($parameters as $parameter) {
+            if (! is_array($parameter)) {
+                continue;
+            }
+
+            if (($parameter['$ref'] ?? null) === '#/components/parameters/TenantHeader') {
+                return $parameters;
+            }
+
+            if (($parameter['name'] ?? null) === $this->tenancyContext->tenantHeader && ($parameter['in'] ?? null) === 'header') {
+                return $parameters;
+            }
+        }
+
+        $parameters[] = ['$ref' => '#/components/parameters/TenantHeader'];
+
+        return $parameters;
     }
 
     private function buildValidationErrorExample(): array

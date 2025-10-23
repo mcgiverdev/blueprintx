@@ -163,7 +163,7 @@ class DocsLayerGeneratorTest extends TestCase
     public function test_it_emits_warnings_when_validation_fails(): void
     {
         $invalidBuilder = new class extends OpenApiDocumentBuilder {
-            public function build(Blueprint $blueprint): array
+            public function build(Blueprint $blueprint, array $options = []): array
             {
                 return ['openapi' => '3.1.0'];
             }
@@ -181,7 +181,7 @@ class DocsLayerGeneratorTest extends TestCase
     public function test_it_skips_validation_when_disabled(): void
     {
         $invalidBuilder = new class extends OpenApiDocumentBuilder {
-            public function build(Blueprint $blueprint): array
+            public function build(Blueprint $blueprint, array $options = []): array
             {
                 return ['openapi' => '3.1.0'];
             }
@@ -200,7 +200,7 @@ class DocsLayerGeneratorTest extends TestCase
         $schemaPath = dirname(__DIR__, 2) . '/resources/schema/openapi-minimal.schema.json';
 
         $invalidBuilder = new class extends OpenApiDocumentBuilder {
-            public function build(Blueprint $blueprint): array
+            public function build(Blueprint $blueprint, array $options = []): array
             {
                 return ['openapi' => '3.1.0'];
             }

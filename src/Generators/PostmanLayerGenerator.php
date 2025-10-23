@@ -9,6 +9,7 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Docs\OpenApiDocumentBuilder;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
+use BlueprintX\Support\Tenancy\BlueprintTenancyContext;
 use Illuminate\Support\Str;
 use JsonException;
 
@@ -34,6 +35,8 @@ class PostmanLayerGenerator implements LayerGenerator
         'Europe/Madrid',
     ];
 
+    private ?BlueprintTenancyContext $tenancyContext = null;
+
     public function __construct(
         private readonly OpenApiDocumentBuilder $builder,
         private readonly bool $enabledByDefault = false,
@@ -55,6 +58,7 @@ class PostmanLayerGenerator implements LayerGenerator
     public function generate(Blueprint $blueprint, ArchitectureDriver $driver, array $options = []): GenerationResult
     {
         $result = new GenerationResult();
+        $this->tenancyContext = null;
 
         $withPostman = $options['with_postman'] ?? $this->enabledByDefault;
 
@@ -67,7 +71,8 @@ class PostmanLayerGenerator implements LayerGenerator
             return $result;
         }
 
-        $document = $this->builder->build($blueprint);
+        $this->tenancyContext = BlueprintTenancyContext::fromBlueprint($blueprint, $options);
+        $document = $this->builder->build($blueprint, $options);
 
         $postmanOptions = is_array($options['postman'] ?? null) ? $options['postman'] : [];
 
@@ -82,15 +87,18 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         $normalizedApiPrefix = $this->normalizeApiPrefix($apiPrefix);
+        $baseUrl = $this->sanitizeBaseUrl($baseUrl, $normalizedApiPrefix);
 
-        $baseUrl = rtrim($baseUrl, '/');
-        if ($normalizedApiPrefix !== '' && str_ends_with($baseUrl, $normalizedApiPrefix)) {
-            $baseUrl = rtrim(substr($baseUrl, 0, -strlen($normalizedApiPrefix)), '/');
-        }
-
-        if ($baseUrl === '') {
-            $baseUrl = $this->defaultBaseUrl;
-        }
+        $tenancyOptions = is_array($postmanOptions['tenancy'] ?? null) ? $postmanOptions['tenancy'] : [];
+        $centralBaseUrl = $this->sanitizeBaseUrl(
+            is_string($tenancyOptions['central_base_url'] ?? null) ? (string) $tenancyOptions['central_base_url'] : $baseUrl,
+            $normalizedApiPrefix
+        );
+        $tenantBaseUrl = $this->sanitizeBaseUrl(
+            is_string($tenancyOptions['tenant_base_url'] ?? null) ? (string) $tenancyOptions['tenant_base_url'] : $baseUrl,
+            $normalizedApiPrefix
+        );
+        $resolvedBaseUrl = $this->resolveBaseUrl($baseUrl, $centralBaseUrl, $tenantBaseUrl);
 
         $collectionNameOption = $postmanOptions['collection_name'] ?? $this->defaultCollectionName;
         if (! is_string($collectionNameOption) || trim($collectionNameOption) === '') {
@@ -110,7 +118,9 @@ class PostmanLayerGenerator implements LayerGenerator
         $collection = $this->buildCollection(
             $blueprint,
             $document,
-            $baseUrl,
+            $resolvedBaseUrl,
+            $centralBaseUrl,
+            $tenantBaseUrl,
             $normalizedApiPrefix,
             $authFields,
             $collectionNameOption,
@@ -135,11 +145,14 @@ class PostmanLayerGenerator implements LayerGenerator
 
     /**
      * @param array<string, mixed> $document
+     * @param Field[] $authFields
      */
     private function buildCollection(
         Blueprint $blueprint,
         array $document,
         string $baseUrl,
+        string $centralBaseUrl,
+        string $tenantBaseUrl,
         string $apiPrefix,
         array $authFields,
         string $collectionName,
@@ -162,38 +175,7 @@ class PostmanLayerGenerator implements LayerGenerator
                 'description' => is_string($description) && $description !== '' ? $description : null,
             ]),
             'item' => $items,
-            'variable' => [
-                [
-                    'key' => 'base_url',
-                    'value' => $baseUrl,
-                    'type' => 'string',
-                    'description' => 'URL base usada para las peticiones generadas.',
-                ],
-                [
-                    'key' => 'api_prefix',
-                    'value' => $apiPrefix,
-                    'type' => 'string',
-                    'description' => 'Prefijo API aplicado automáticamente a los endpoints.',
-                ],
-                [
-                    'key' => 'bearer_token',
-                    'value' => '',
-                    'type' => 'string',
-                    'description' => 'Token Bearer capturado desde la petición de login.',
-                ],
-                [
-                    'key' => 'tenant_id',
-                    'value' => '',
-                    'type' => 'string',
-                    'description' => 'UUID del tenant para registrar nuevos usuarios.',
-                ],
-                [
-                    'key' => 'collection_version',
-                    'value' => $version,
-                    'type' => 'string',
-                    'description' => 'Versión lógica de la colección generada.',
-                ],
-            ],
+            'variable' => $this->buildVariables($baseUrl, $centralBaseUrl, $tenantBaseUrl, $apiPrefix, $version),
         ];
     }
 
@@ -443,6 +425,40 @@ class PostmanLayerGenerator implements LayerGenerator
         return is_string($encoded) ? $encoded : '{}';
     }
 
+    private function sanitizeBaseUrl(string $baseUrl, string $normalizedApiPrefix): string
+    {
+        $sanitized = trim($baseUrl);
+
+        if ($sanitized === '') {
+            $sanitized = $this->defaultBaseUrl;
+        }
+
+        $sanitized = rtrim($sanitized, '/');
+
+        if ($normalizedApiPrefix !== '' && str_ends_with($sanitized, $normalizedApiPrefix)) {
+            $sanitized = rtrim(substr($sanitized, 0, -strlen($normalizedApiPrefix)), '/');
+        }
+
+        if ($sanitized === '') {
+            return $this->defaultBaseUrl;
+        }
+
+        return $sanitized;
+    }
+
+    private function resolveBaseUrl(string $baseUrl, string $centralBaseUrl, string $tenantBaseUrl): string
+    {
+        if ($this->tenancyContext === null) {
+            return $baseUrl;
+        }
+
+        return match ($this->tenancyContext->routingScope) {
+            'tenant', 'both' => $tenantBaseUrl !== '' ? $tenantBaseUrl : $baseUrl,
+            'central' => $centralBaseUrl !== '' ? $centralBaseUrl : $baseUrl,
+            default => $baseUrl,
+        };
+    }
+
     private function normalizeApiPrefix(string $apiPrefix): string
     {
         $trimmed = trim($apiPrefix);
@@ -454,6 +470,71 @@ class PostmanLayerGenerator implements LayerGenerator
         $normalized = '/' . ltrim($trimmed, '/');
 
         return rtrim($normalized, '/');
+    }
+
+    private function buildVariables(string $baseUrl, string $centralBaseUrl, string $tenantBaseUrl, string $apiPrefix, string $version): array
+    {
+        $variables = [
+            [
+                'key' => 'base_url',
+                'value' => $baseUrl,
+                'type' => 'string',
+                'description' => 'URL base utilizada por defecto para las peticiones.',
+            ],
+            [
+                'key' => 'api_prefix',
+                'value' => $apiPrefix,
+                'type' => 'string',
+                'description' => 'Prefijo API aplicado automáticamente a los endpoints.',
+            ],
+            [
+                'key' => 'bearer_token',
+                'value' => '',
+                'type' => 'string',
+                'description' => 'Token Bearer capturado desde la petición de login.',
+            ],
+            [
+                'key' => 'tenant_id',
+                'value' => '',
+                'type' => 'string',
+                'description' => 'Identificador del tenant utilizado en entornos multi-tenant.',
+            ],
+            [
+                'key' => 'collection_version',
+                'value' => $version,
+                'type' => 'string',
+                'description' => 'Versión lógica de la colección generada.',
+            ],
+        ];
+
+        if ($this->tenancyContext !== null) {
+            if ($this->tenancyContext->appliesToCentral) {
+                $variables[] = [
+                    'key' => 'central_base_url',
+                    'value' => $centralBaseUrl,
+                    'type' => 'string',
+                    'description' => 'URL base para ejecutar las rutas de alcance central.',
+                ];
+            }
+
+            if ($this->tenancyContext->appliesToTenant) {
+                $variables[] = [
+                    'key' => 'tenant_base_url',
+                    'value' => $tenantBaseUrl,
+                    'type' => 'string',
+                    'description' => 'URL base para ejecutar las rutas dentro del contexto tenant.',
+                ];
+            }
+
+            $variables[] = [
+                'key' => 'tenant_header',
+                'value' => $this->tenancyContext->tenantHeader,
+                'type' => 'string',
+                'description' => 'Nombre del encabezado que transporta el identificador del tenant.',
+            ];
+        }
+
+        return $variables;
     }
 
     /**
@@ -487,6 +568,26 @@ class PostmanLayerGenerator implements LayerGenerator
         return str_starts_with($normalizedPath, $prefix . '/') || $normalizedPath === $prefix;
     }
 
+    private function isTenantHeaderRequired(): bool
+    {
+        return $this->tenancyContext !== null && $this->tenancyContext->routingScope === 'tenant';
+    }
+
+    private function tenantHeaderDescription(): string
+    {
+        if ($this->tenancyContext === null) {
+            return 'Identificador del tenant para entornos multi-tenant.';
+        }
+
+        $header = $this->tenancyContext->tenantHeader;
+
+        if ($this->isTenantHeaderRequired()) {
+            return sprintf('Incluye el encabezado %s con el identificador del tenant.', $header);
+        }
+
+        return sprintf('Encabezado opcional %s para ejecutar en contexto tenant.', $header);
+    }
+
     private function requiresAuthentication(Blueprint $blueprint): bool
     {
         foreach ($blueprint->apiMiddleware() as $middleware) {
@@ -508,12 +609,15 @@ class PostmanLayerGenerator implements LayerGenerator
      * @param array<int, array<string, mixed>> $parameters
      * @return array<int, array<string, mixed>>
      */
-    private function buildHeaders(string $method, array $parameters, bool $requiresAuth, bool $includeAuthorization = true): array
+    private function buildHeaders(string $method, array $parameters, bool $requiresAuth, bool $includeAuthorization = true, bool $forceTenantHeader = false): array
     {
         $headers = [];
         $hasAccept = false;
         $hasContentType = false;
         $hasAuthorization = false;
+        $hasTenantHeader = false;
+        $tenantHeaderName = $this->tenancyContext?->tenantHeader;
+        $tenantHeaderNameLower = $tenantHeaderName !== null ? strtolower($tenantHeaderName) : null;
 
         foreach ($parameters as $parameter) {
             if (($parameter['in'] ?? null) !== 'header') {
@@ -529,6 +633,7 @@ class PostmanLayerGenerator implements LayerGenerator
             $hasAccept = $hasAccept || $lower === 'accept';
             $hasContentType = $hasContentType || $lower === 'content-type';
             $hasAuthorization = $hasAuthorization || $lower === 'authorization';
+            $hasTenantHeader = $hasTenantHeader || ($tenantHeaderNameLower !== null && $lower === $tenantHeaderNameLower);
 
             $headers[] = array_filter([
                 'key' => $name,
@@ -557,6 +662,18 @@ class PostmanLayerGenerator implements LayerGenerator
                 'key' => 'Authorization',
                 'value' => 'Bearer {{bearer_token}}',
             ];
+        }
+
+        $shouldIncludeTenantHeader = $tenantHeaderName !== null
+            && ($forceTenantHeader || ($this->tenancyContext?->appliesToTenant ?? false));
+
+        if ($shouldIncludeTenantHeader && ! $hasTenantHeader) {
+            $headers[] = array_filter([
+                'key' => $tenantHeaderName,
+                'value' => '{{tenant_id}}',
+                'description' => $this->tenantHeaderDescription(),
+                'disabled' => ! $this->isTenantHeaderRequired(),
+            ], static fn ($value) => $value !== null && $value !== '');
         }
 
         return $headers;
@@ -672,7 +789,7 @@ class PostmanLayerGenerator implements LayerGenerator
             'name' => 'Login (obtener token)',
             'request' => [
                 'method' => 'POST',
-                'header' => $this->buildHeaders('post', [], false, false),
+                'header' => $this->buildHeaders('post', [], false, false, $this->tenancyContext?->appliesToTenant ?? false),
                 'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
                 'body' => [
                     'mode' => 'raw',
@@ -704,7 +821,7 @@ class PostmanLayerGenerator implements LayerGenerator
             'name' => 'Register (crear usuario)',
             'request' => [
                 'method' => 'POST',
-                'header' => $this->buildHeaders('post', [], false, false),
+                'header' => $this->buildHeaders('post', [], false, false, $this->tenancyContext?->appliesToTenant ?? false),
                 'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
                 'body' => [
                     'mode' => 'raw',
@@ -772,7 +889,7 @@ class PostmanLayerGenerator implements LayerGenerator
             'name' => 'Perfil actual',
             'request' => [
                 'method' => 'GET',
-                'header' => $this->buildHeaders('get', [], true),
+                'header' => $this->buildHeaders('get', [], true, true, $this->tenancyContext?->appliesToTenant ?? false),
                 'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
             ],
         ]);
@@ -790,7 +907,7 @@ class PostmanLayerGenerator implements LayerGenerator
             'name' => 'Logout (revocar token)',
             'request' => [
                 'method' => 'POST',
-                'header' => $this->buildHeaders('post', [], true),
+                'header' => $this->buildHeaders('post', [], true, true, $this->tenancyContext?->appliesToTenant ?? false),
                 'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
             ],
         ]);

@@ -67,7 +67,7 @@ class DocsLayerGenerator implements LayerGenerator
             return $result;
         }
 
-        $document = $this->builder->build($blueprint);
+    $document = $this->builder->build($blueprint, $options);
         $contents = Yaml::dump($document, 8, 2, Yaml::DUMP_EMPTY_ARRAY_AS_SEQUENCE | Yaml::DUMP_OBJECT_AS_MAP);
         $path = $this->buildPath($blueprint, $options);
 
