@@ -4,6 +4,7 @@ namespace BlueprintX;
 
 use BlueprintX\Console\Commands\GenerateBlueprintsCommand;
 use BlueprintX\Console\Commands\ListBlueprintsCommand;
+use BlueprintX\Console\Commands\PublishTenancyAssetsCommand;
 use BlueprintX\Console\Commands\RollbackBlueprintsCommand;
 use BlueprintX\Console\Commands\ValidateBlueprintsCommand;
 use BlueprintX\Contracts\BlueprintParser;
@@ -372,6 +373,7 @@ class BlueprintXServiceProvider extends ServiceProvider
             GenerateBlueprintsCommand::class,
             ValidateBlueprintsCommand::class,
             ListBlueprintsCommand::class,
+            PublishTenancyAssetsCommand::class,
             RollbackBlueprintsCommand::class,
         ]);
     }
