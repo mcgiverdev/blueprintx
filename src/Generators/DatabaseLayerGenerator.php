@@ -119,7 +119,7 @@ class DatabaseLayerGenerator implements LayerGenerator
                 $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $seederTemplate, $driver->name()));
             }
 
-            $this->storeSeederHistory($blueprint, $seederContext['metadata']);
+            $this->storeSeederHistory($blueprint, $seederContext['metadata'], $options);
 
             if (($paths['module_seeder'] ?? null) !== null && $this->templates->exists($moduleSeederTemplate)) {
                 $moduleSeederContext = $this->buildModuleSeederContext($blueprint);
@@ -142,6 +142,16 @@ class DatabaseLayerGenerator implements LayerGenerator
                 $result->addFile(new GeneratedFile(
                     'database/seeders/DatabaseSeeder.php',
                     $databaseSeeder,
+                    true
+                ));
+            }
+
+            $tenantDatabaseSeeder = $this->buildTenantDatabaseSeederContent();
+
+            if ($tenantDatabaseSeeder !== null) {
+                $result->addFile(new GeneratedFile(
+                    'database/seeders/Tenant/DatabaseSeeder.php',
+                    $tenantDatabaseSeeder,
                     true
                 ));
             }
@@ -1537,7 +1547,7 @@ class DatabaseLayerGenerator implements LayerGenerator
         $this->persistHistory();
     }
 
-    private function storeSeederHistory(Blueprint $blueprint, array $metadata): void
+    private function storeSeederHistory(Blueprint $blueprint, array $metadata, array $options): void
     {
         $history = $this->loadHistory();
 
@@ -1547,6 +1557,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $moduleKey = $this->moduleKey($blueprint);
         $moduleStudly = $metadata['module_studly'] ?? $this->moduleSegment($blueprint);
+        $scope = $this->determineSeederScope($blueprint, $options);
 
         if (! isset($this->refreshedSeederModules[$moduleKey])) {
             if (isset($history['seeders'][$moduleKey]) && is_array($history['seeders'][$moduleKey])) {
@@ -1564,12 +1575,14 @@ class DatabaseLayerGenerator implements LayerGenerator
             $history['seeders'][$moduleKey] = [
                 'module' => $blueprint->module(),
                 'module_studly' => $moduleStudly,
+                'scope' => $scope,
                 'entities' => [],
             ];
         }
 
         $history['seeders'][$moduleKey]['module'] = $blueprint->module();
         $history['seeders'][$moduleKey]['module_studly'] = $moduleStudly;
+        $history['seeders'][$moduleKey]['scope'] = $scope;
 
         $entity = (string) ($metadata['entity'] ?? Str::studly($blueprint->entity()));
 
@@ -1824,6 +1837,12 @@ class DatabaseLayerGenerator implements LayerGenerator
                 continue;
             }
 
+            $scope = $this->normalizeSeederScope($moduleData['scope'] ?? null, $moduleStudly);
+
+            if ($scope === 'tenant') {
+                continue;
+            }
+
             $moduleSeeders[] = 'Database\\Seeders\\' . $moduleStudly . 'Seeder';
         }
 
@@ -1896,6 +1915,139 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         return $contents;
+    }
+
+    private function buildTenantDatabaseSeederContent(): ?string
+    {
+        $history = $this->loadHistory();
+        $seeders = $history['seeders'] ?? [];
+
+        if (! is_array($seeders) || $seeders === []) {
+            return null;
+        }
+
+        $moduleSeeders = [];
+
+        foreach ($seeders as $moduleData) {
+            if (! is_array($moduleData)) {
+                continue;
+            }
+
+            $moduleStudly = $moduleData['module_studly'] ?? null;
+            $entities = $moduleData['entities'] ?? [];
+
+            if (! is_string($moduleStudly) || $moduleStudly === '' || ! is_array($entities) || $entities === []) {
+                continue;
+            }
+
+            $scope = $this->normalizeSeederScope($moduleData['scope'] ?? null, $moduleStudly);
+
+            if ($scope !== 'tenant') {
+                continue;
+            }
+
+            $moduleSeeders[] = 'Database\\Seeders\\' . $moduleStudly . 'Seeder';
+        }
+
+        $moduleSeeders = array_values(array_unique($moduleSeeders));
+
+        if ($moduleSeeders === []) {
+            return null;
+        }
+
+        $path = $this->toAbsolutePath('database/seeders/Tenant/DatabaseSeeder.php');
+        $existing = is_file($path) ? @file_get_contents($path) : null;
+
+        if ($existing === false) {
+            $existing = null;
+        }
+
+        $existingUses = $existing !== null ? $this->extractUseStatements($existing) : [];
+        $imports = $this->prepareDatabaseSeederImports($existingUses, $moduleSeeders);
+        $uses = $imports['uses'];
+        $callIdentifiers = $imports['identifiers'];
+
+        $existingBody = $existing !== null ? $this->extractRunBody($existing) : '';
+        $customBody = $this->removeSeederCalls($existingBody);
+        $customBodyIndented = $this->indentRunBody($customBody);
+
+        $lines = [];
+        $lines[] = '<?php';
+        $lines[] = '';
+        $lines[] = 'namespace Database\\Seeders\\Tenant;';
+        $lines[] = '';
+
+        foreach ($uses as $use) {
+            $lines[] = 'use ' . $use . ';';
+        }
+
+        if ($uses !== []) {
+            $lines[] = '';
+        }
+
+        $lines[] = 'class DatabaseSeeder extends Seeder';
+        $lines[] = '{';
+        $lines[] = '    public function run(): void';
+        $lines[] = '    {';
+        $lines[] = '        // @blueprintx:seeders:start';
+        $lines[] = '        $this->call([';
+
+        foreach ($callIdentifiers as $identifier) {
+            $lines[] = '            ' . $identifier . '::class,';
+        }
+
+        $lines[] = '        ]);';
+        $lines[] = '        // @blueprintx:seeders:end';
+
+        if ($customBodyIndented !== '') {
+            $lines[] = '';
+
+            foreach (preg_split('/\r?\n/', $customBodyIndented) as $customLine) {
+                $lines[] = $customLine;
+            }
+        }
+
+        $lines[] = '    }';
+        $lines[] = '}';
+        $lines[] = '';
+
+        $contents = implode(PHP_EOL, $lines);
+
+        if ($existing !== null && $this->normalizeWhitespace($existing) === $this->normalizeWhitespace($contents)) {
+            return null;
+        }
+
+        return $contents;
+    }
+
+    private function normalizeSeederScope(mixed $scope, ?string $moduleStudly = null): string
+    {
+        if (is_string($scope)) {
+            $normalized = strtolower(trim($scope));
+
+            if ($normalized === 'tenant') {
+                return 'tenant';
+            }
+
+            if ($normalized === 'central') {
+                return 'central';
+            }
+        }
+
+        if (is_string($moduleStudly) && $moduleStudly !== '') {
+            $segments = preg_split('#[\\/]+#', $moduleStudly) ?: [];
+            $first = strtolower((string) ($segments[0] ?? ''));
+
+            if ($first === 'tenant') {
+                return 'tenant';
+            }
+
+            if ($first === 'central' || $first === 'shared') {
+                return 'central';
+            }
+        }
+
+        return 'central';
     }
 
     private function extractRunBody(string $contents): string
@@ -2276,23 +2428,32 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $mode = $this->resolveTenancyMode($blueprint, $options);
 
-        if ($storage === 'central' || $storage === 'tenant') {
+        if (in_array($storage, ['central', 'tenant'], true)) {
             return $storage;
         }
 
         if ($storage === 'both') {
             return match ($mode) {
                 'tenant' => 'tenant',
-                'shared' => 'shared',
                 default => 'central',
             };
         }
 
         return match ($mode) {
             'tenant' => 'tenant',
-            'shared' => 'shared',
             default => 'central',
         };
+    }
+
+    private function determineSeederScope(Blueprint $blueprint, array $options): string
+    {
+        $scope = $this->determineMigrationScope($blueprint, $options);
+
+        if ($scope !== 'tenant') {
+            return 'central';
+        }
+
+        return 'tenant';
     }
 
     private function resolveTenancyMode(Blueprint $blueprint, array $options): string
