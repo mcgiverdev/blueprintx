@@ -26,6 +26,8 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     private array $refreshedSeederModules = [];
 
+    private ?string $currentMigrationsRoot = null;
+
     private const RESERVED_TABLE_BASELINES = [
         'users' => [
             'fields' => ['name', 'email', 'email_verified_at', 'password', 'remember_token'],
@@ -46,103 +48,108 @@ class DatabaseLayerGenerator implements LayerGenerator
      */
     public function generate(Blueprint $blueprint, ArchitectureDriver $driver, array $options = []): GenerationResult
     {
+        $this->currentMigrationsRoot = $this->resolveMigrationsRoot($blueprint, $options);
         $result = new GenerationResult();
 
-        $template = sprintf('@%s/database/migration.stub.twig', $driver->name());
-        $factoryTemplate = sprintf('@%s/database/factory.stub.twig', $driver->name());
-        $seederTemplate = sprintf('@%s/database/seeder.stub.twig', $driver->name());
-        $moduleSeederTemplate = sprintf('@%s/database/module-seeder.stub.twig', $driver->name());
+        try {
+            $template = sprintf('@%s/database/migration.stub.twig', $driver->name());
+            $factoryTemplate = sprintf('@%s/database/factory.stub.twig', $driver->name());
+            $seederTemplate = sprintf('@%s/database/seeder.stub.twig', $driver->name());
+            $moduleSeederTemplate = sprintf('@%s/database/module-seeder.stub.twig', $driver->name());
 
-        $context = $this->buildContext($blueprint, $driver, $options);
-        $paths = $this->derivePaths($blueprint, $options);
-        $reservedMigration = $this->isMigrationReserved($blueprint);
+            $context = $this->buildContext($blueprint, $driver, $options);
+            $paths = $this->derivePaths($blueprint, $options, $this->currentMigrationsRoot);
+            $reservedMigration = $this->isMigrationReserved($blueprint);
 
-        $relationsByField = $context['relations_by_field'] ?? $this->indexRelationsByField($blueprint);
-        $seederContext = $this->buildSeederContext($blueprint, $context['namespaces'], $relationsByField);
-        $context['seeder'] = $seederContext['context'];
+            $relationsByField = $context['relations_by_field'] ?? $this->indexRelationsByField($blueprint);
+            $seederContext = $this->buildSeederContext($blueprint, $context['namespaces'], $relationsByField);
+            $context['seeder'] = $seederContext['context'];
 
-        $reservedAlter = null;
+            $reservedAlter = null;
 
-        if ($reservedMigration) {
-            $this->applyReservedBaseMigrationAdjustments($blueprint, $paths['migration'] ?? null);
-            $reservedAlter = $this->buildReservedAlterMigration($blueprint, $relationsByField);
-        }
+            if ($reservedMigration) {
+                $this->applyReservedBaseMigrationAdjustments($blueprint, $paths['migration'] ?? null);
+                $reservedAlter = $this->buildReservedAlterMigration($blueprint, $relationsByField);
+            }
 
-        if (! $reservedMigration) {
-            if ($this->templates->exists($template)) {
+            if (! $reservedMigration) {
+                if ($this->templates->exists($template)) {
+                    $result->addFile(new GeneratedFile(
+                        $paths['migration'],
+                        $this->templates->render($template, $context)
+                    ));
+                } else {
+                    $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $template, $driver->name()));
+                }
+            } elseif ($reservedAlter !== null) {
+                if ($this->templates->exists($template)) {
+                    $alterContext = $context;
+                    $alterContext['migration'] = $reservedAlter['context'];
+
+                    $alterPath = $this->resolveReservedAlterPath($blueprint, $options, $this->currentMigrationsRoot);
+
+                    $result->addFile(new GeneratedFile(
+                        $alterPath['path'],
+                        $this->templates->render($template, $alterContext),
+                        true
+                    ));
+
+                    $this->storeReservedAlterHistory($blueprint, $alterPath['prefix'], $reservedAlter['metadata']);
+                } else {
+                    $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $template, $driver->name()));
+                }
+            }
+
+            if ($this->templates->exists($factoryTemplate)) {
                 $result->addFile(new GeneratedFile(
-                    $paths['migration'],
-                    $this->templates->render($template, $context)
+                    $paths['factory'],
+                    $this->templates->render($factoryTemplate, $context)
                 ));
             } else {
-                $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $template, $driver->name()));
+                $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $factoryTemplate, $driver->name()));
             }
-        } elseif ($reservedAlter !== null) {
-            if ($this->templates->exists($template)) {
-                $alterContext = $context;
-                $alterContext['migration'] = $reservedAlter['context'];
 
-                $alterPath = $this->resolveReservedAlterPath($blueprint, $options);
-
+            if ($this->templates->exists($seederTemplate)) {
                 $result->addFile(new GeneratedFile(
-                    $alterPath['path'],
-                    $this->templates->render($template, $alterContext),
+                    $paths['seeder'],
+                    $this->templates->render($seederTemplate, $context),
                     true
                 ));
-
-                $this->storeReservedAlterHistory($blueprint, $alterPath['prefix'], $reservedAlter['metadata']);
             } else {
-                $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $template, $driver->name()));
+                $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $seederTemplate, $driver->name()));
             }
-        }
 
-        if ($this->templates->exists($factoryTemplate)) {
-            $result->addFile(new GeneratedFile(
-                $paths['factory'],
-                $this->templates->render($factoryTemplate, $context)
-            ));
-        } else {
-            $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $factoryTemplate, $driver->name()));
-        }
+            $this->storeSeederHistory($blueprint, $seederContext['metadata']);
 
-        if ($this->templates->exists($seederTemplate)) {
-            $result->addFile(new GeneratedFile(
-                $paths['seeder'],
-                $this->templates->render($seederTemplate, $context),
-                true
-            ));
-        } else {
-            $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $seederTemplate, $driver->name()));
-        }
+            if (($paths['module_seeder'] ?? null) !== null && $this->templates->exists($moduleSeederTemplate)) {
+                $moduleSeederContext = $this->buildModuleSeederContext($blueprint);
 
-        $this->storeSeederHistory($blueprint, $seederContext['metadata']);
+                if ($moduleSeederContext !== null) {
+                    $moduleContext = $context;
+                    $moduleContext['module_seeder'] = $moduleSeederContext;
 
-        if (($paths['module_seeder'] ?? null) !== null && $this->templates->exists($moduleSeederTemplate)) {
-            $moduleSeederContext = $this->buildModuleSeederContext($blueprint);
+                    $result->addFile(new GeneratedFile(
+                        $paths['module_seeder'],
+                        $this->templates->render($moduleSeederTemplate, $moduleContext),
+                        true
+                    ));
+                }
+            }
 
-            if ($moduleSeederContext !== null) {
-                $moduleContext = $context;
-                $moduleContext['module_seeder'] = $moduleSeederContext;
+            $databaseSeeder = $this->buildDatabaseSeederContent();
 
+            if ($databaseSeeder !== null) {
                 $result->addFile(new GeneratedFile(
-                    $paths['module_seeder'],
-                    $this->templates->render($moduleSeederTemplate, $moduleContext),
+                    'database/seeders/DatabaseSeeder.php',
+                    $databaseSeeder,
                     true
                 ));
             }
+
+            return $result;
+        } finally {
+            $this->currentMigrationsRoot = null;
         }
-
-        $databaseSeeder = $this->buildDatabaseSeederContent();
-
-        if ($databaseSeeder !== null) {
-            $result->addFile(new GeneratedFile(
-                'database/seeders/DatabaseSeeder.php',
-                $databaseSeeder,
-                true
-            ));
-        }
-
-        return $result;
     }
 
     /**
@@ -184,13 +191,14 @@ class DatabaseLayerGenerator implements LayerGenerator
      * @param array<string, mixed> $options
      * @return array<string, string>
      */
-    private function derivePaths(Blueprint $blueprint, array $options): array
+    private function derivePaths(Blueprint $blueprint, array $options, ?string $migrationsRootOverride = null): array
     {
         $entity = Str::studly($blueprint->entity());
         $module = $this->moduleSegment($blueprint);
         $modulePath = $module !== null ? str_replace('\\', '/', $module) : null;
 
-        $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
+        $migrationsRoot = $migrationsRootOverride ?? $this->resolveMigrationsRoot($blueprint, $options);
+        $migrationsRoot = rtrim(str_replace('\\', '/', $migrationsRoot), '/');
         $factoriesRoot = rtrim($options['paths']['database']['factories'] ?? 'database/factories/Domain', '/');
         $seedersRoot = rtrim($options['paths']['database']['seeders'] ?? 'database/seeders', '/');
 
@@ -259,7 +267,7 @@ class DatabaseLayerGenerator implements LayerGenerator
                 $isReserved = ($history['migrations'][$key]['reserved'] ?? false) === true;
 
                 if ($customPrefix !== null && ! $isReserved && $customPrefix !== $storedPrefix) {
-                    $existing = $this->findExistingMigration($blueprint, $options);
+                    $existing = $this->findExistingMigration($blueprint, $options, $this->currentMigrationsRoot);
 
                     if ($existing !== null && $existing['prefix'] !== $customPrefix) {
                         $renamedPrefix = $this->renameMigrationFile(
@@ -286,7 +294,7 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
         }
 
-        $existing = $this->findExistingMigration($blueprint, $options);
+        $existing = $this->findExistingMigration($blueprint, $options, $this->currentMigrationsRoot);
 
         if ($existing !== null) {
             $isReserved = $this->shouldReserveMigration($blueprint, $existing);
@@ -787,7 +795,9 @@ class DatabaseLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            $path = $this->toAbsolutePath('database/migrations/' . $prefix . '_alter_' . $table . '_table.php');
+            $root = $this->currentMigrationsRoot ?? 'database/migrations';
+            $root = rtrim(str_replace('\\', '/', $root), '/');
+            $path = $this->toAbsolutePath($root . '/' . $prefix . '_alter_' . $table . '_table.php');
 
             if (! is_file($path)) {
                 continue;
@@ -1066,9 +1076,10 @@ class DatabaseLayerGenerator implements LayerGenerator
         return false;
     }
 
-    private function resolveReservedAlterPath(Blueprint $blueprint, array $options): array
+    private function resolveReservedAlterPath(Blueprint $blueprint, array $options, ?string $migrationsRootOverride = null): array
     {
-        $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
+        $migrationsRoot = $migrationsRootOverride ?? $this->resolveMigrationsRoot($blueprint, $options);
+        $migrationsRoot = rtrim(str_replace('\\', '/', $migrationsRoot), '/');
         $customPrefix = $this->reservedAlterCustomPrefix($blueprint);
 
         if ($customPrefix !== null) {
@@ -1830,7 +1841,9 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         $existingUses = $existing !== null ? $this->extractUseStatements($existing) : [];
-        $uses = $this->mergeUseStatements($existingUses, $moduleSeeders);
+        $imports = $this->prepareDatabaseSeederImports($existingUses, $moduleSeeders);
+        $uses = $imports['uses'];
+        $callIdentifiers = $imports['identifiers'];
 
         $existingBody = $existing !== null ? $this->extractRunBody($existing) : '';
         $customBody = $this->removeSeederCalls($existingBody);
@@ -1857,8 +1870,8 @@ class DatabaseLayerGenerator implements LayerGenerator
         $lines[] = '        // @blueprintx:seeders:start';
         $lines[] = '        $this->call([';
 
-        foreach ($moduleSeeders as $class) {
-            $lines[] = '            ' . class_basename($class) . '::class,';
+        foreach ($callIdentifiers as $identifier) {
+            $lines[] = '            ' . $identifier . '::class,';
         }
 
         $lines[] = '        ]);';
@@ -2011,37 +2024,365 @@ class DatabaseLayerGenerator implements LayerGenerator
     /**
      * @param array<int, string> $existingUses
      * @param array<int, string> $moduleSeeders
-     * @return array<int, string>
+     * @return array{uses: array<int, string>, identifiers: array<int, string>}
      */
-    private function mergeUseStatements(array $existingUses, array $moduleSeeders): array
+    private function prepareDatabaseSeederImports(array $existingUses, array $moduleSeeders): array
     {
-        $set = [];
+        $moduleSeeders = array_values(array_unique($moduleSeeders));
+
+        $moduleMap = [];
+        foreach ($moduleSeeders as $class) {
+            $moduleMap[strtolower($class)] = true;
+        }
+
+        $entries = [];
+        $usedIdentifiers = [];
 
         foreach ($existingUses as $use) {
-            $set[$use] = true;
-        }
+            $parsed = $this->parseUseStatement($use);
 
-        $set['Illuminate\\Database\\Seeder'] = true;
-
-        foreach ($moduleSeeders as $class) {
-            $set[$class] = true;
-        }
-
-        $uses = array_keys($set);
-
-        usort($uses, static function (string $a, string $b): int {
-            if ($a === 'Illuminate\\Database\\Seeder') {
-                return -1;
+            if ($parsed === null) {
+                continue;
             }
 
-            if ($b === 'Illuminate\\Database\\Seeder') {
+            $key = strtolower($parsed['fqcn']);
+
+            if (isset($moduleMap[$key])) {
+                continue;
+            }
+
+            if (! isset($entries[$key])) {
+                $entries[$key] = [
+                    'fqcn' => $parsed['fqcn'],
+                    'alias' => $parsed['alias'],
+                ];
+
+                $identifier = $parsed['alias'] ?? class_basename($parsed['fqcn']);
+
+                if ($identifier !== '') {
+                    $usedIdentifiers[$identifier] = true;
+                }
+            }
+        }
+
+        $seederKey = strtolower('Illuminate\\Database\\Seeder');
+
+        if (! isset($entries[$seederKey])) {
+            $entries[$seederKey] = [
+                'fqcn' => 'Illuminate\\Database\\Seeder',
+                'alias' => null,
+            ];
+            $usedIdentifiers['Seeder'] = true;
+        } else {
+            $identifier = $entries[$seederKey]['alias'] ?? 'Seeder';
+
+            if ($identifier !== '') {
+                $usedIdentifiers[$identifier] = true;
+            }
+        }
+
+        $baseCounts = [];
+
+        foreach ($moduleSeeders as $class) {
+            $base = class_basename($class);
+            $baseCounts[$base] = ($baseCounts[$base] ?? 0) + 1;
+        }
+
+        $moduleIdentifiers = [];
+
+        foreach ($moduleSeeders as $class) {
+            $base = class_basename($class);
+            $key = strtolower($class);
+
+            $alias = null;
+
+            if (($baseCounts[$base] ?? 0) > 1 || isset($usedIdentifiers[$base])) {
+                $alias = $this->deriveSeederAlias($class, $usedIdentifiers);
+            } else {
+                $usedIdentifiers[$base] = true;
+            }
+
+            $entries[$key] = [
+                'fqcn' => $class,
+                'alias' => $alias,
+            ];
+
+            $moduleIdentifiers[$class] = $alias ?? $base;
+        }
+
+        $allEntries = array_values($entries);
+
+        usort($allEntries, static function (array $a, array $b): int {
+            if ($a['fqcn'] === 'Illuminate\\Database\\Seeder') {
+                return $b['fqcn'] === 'Illuminate\\Database\\Seeder' ? 0 : -1;
+            }
+
+            if ($b['fqcn'] === 'Illuminate\\Database\\Seeder') {
                 return 1;
             }
 
-            return strcmp($a, $b);
+            return strcmp($a['fqcn'], $b['fqcn']);
         });
 
-        return $uses;
+        $uses = [];
+
+        foreach ($allEntries as $entry) {
+            $statement = $entry['fqcn'];
+
+            if ($entry['alias'] !== null) {
+                $statement .= ' as ' . $entry['alias'];
+            }
+
+            $uses[] = $statement;
+        }
+
+        $identifiers = [];
+
+        foreach ($moduleSeeders as $class) {
+            $identifiers[] = $moduleIdentifiers[$class] ?? class_basename($class);
+        }
+
+        return [
+            'uses' => $uses,
+            'identifiers' => $identifiers,
+        ];
+    }
+
+    private function parseUseStatement(string $statement): ?array
+    {
+        $trimmed = trim($statement);
+
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $parts = preg_split('/\s+as\s+/i', $trimmed);
+
+        if ($parts === false || $parts === []) {
+            return null;
+        }
+
+        $fqcn = trim($parts[0], " \\ ");
+
+        if ($fqcn === '') {
+            return null;
+        }
+
+        $alias = null;
+
+        if (isset($parts[1])) {
+            $aliasPart = trim($parts[1]);
+
+            if ($aliasPart !== '') {
+                $alias = $aliasPart;
+            }
+        }
+
+        return [
+            'fqcn' => ltrim($fqcn, '\\'),
+            'alias' => $alias,
+        ];
+    }
+
+    /**
+     * @param array<string, bool> $usedIdentifiers
+     */
+    private function deriveSeederAlias(string $fqcn, array &$usedIdentifiers): string
+    {
+        $segments = array_values(array_filter(explode('\\', trim($fqcn, '\\'))));
+
+        if ($segments === []) {
+            $baseAlias = 'ModuleSeederAlias';
+
+            $alias = $baseAlias;
+            $suffix = 1;
+
+            while (isset($usedIdentifiers[$alias])) {
+                $suffix++;
+                $alias = $baseAlias . $suffix;
+            }
+
+            $usedIdentifiers[$alias] = true;
+
+            return $alias;
+        }
+
+        $base = array_pop($segments);
+        $qualifiers = [];
+
+        foreach ($segments as $segment) {
+            if (strcasecmp($segment, 'Database') === 0 || strcasecmp($segment, 'Seeders') === 0) {
+                continue;
+            }
+
+            $qualifiers[] = $segment;
+        }
+
+        if ($qualifiers === []) {
+            $qualifiers[] = 'Module';
+        }
+
+        $candidate = implode('', $qualifiers) . $base;
+
+        if ($candidate === $base) {
+            $candidate = 'Module' . $base;
+        }
+
+        $alias = $candidate;
+        $suffix = 1;
+
+        while (isset($usedIdentifiers[$alias])) {
+            $suffix++;
+            $alias = $candidate . $suffix;
+        }
+
+        $usedIdentifiers[$alias] = true;
+
+        return $alias;
+    }
+
+    private function resolveMigrationsRoot(Blueprint $blueprint, array $options): string
+    {
+        $configured = $options['paths']['database']['migrations'] ?? null;
+        $root = is_string($configured) && $configured !== '' ? $configured : 'database/migrations';
+        $root = str_replace('\\', '/', $root);
+        $root = rtrim($root, '/');
+
+        if ($root === '') {
+            $root = 'database/migrations';
+        }
+
+        $scope = $this->determineMigrationScope($blueprint, $options);
+
+        if ($scope === 'central' || $scope === '') {
+            return $root;
+        }
+
+        if ($this->pathEndsWithSegment($root, $scope)) {
+            return $root;
+        }
+
+        return $root . '/' . $scope;
+    }
+
+    private function determineMigrationScope(Blueprint $blueprint, array $options): string
+    {
+        $tenancy = $blueprint->tenancy();
+        $storage = null;
+
+        if (isset($tenancy['storage']) && is_string($tenancy['storage'])) {
+            $storage = strtolower(trim($tenancy['storage']));
+        }
+
+        $mode = $this->resolveTenancyMode($blueprint, $options);
+
+        if ($storage === 'central' || $storage === 'tenant') {
+            return $storage;
+        }
+
+        if ($storage === 'both') {
+            return match ($mode) {
+                'tenant' => 'tenant',
+                'shared' => 'shared',
+                default => 'central',
+            };
+        }
+
+        return match ($mode) {
+            'tenant' => 'tenant',
+            'shared' => 'shared',
+            default => 'central',
+        };
+    }
+
+    private function resolveTenancyMode(Blueprint $blueprint, array $options): string
+    {
+        $optionMode = $options['tenancy']['blueprint_mode'] ?? null;
+
+        if (is_string($optionMode)) {
+            $normalized = strtolower(trim($optionMode));
+
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        $tenancy = $blueprint->tenancy();
+
+        if (isset($tenancy['mode']) && is_string($tenancy['mode'])) {
+            $normalized = strtolower(trim($tenancy['mode']));
+
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        $module = $blueprint->module();
+
+        if (is_string($module) && $module !== '') {
+            $segments = preg_split('#[\\/]+#', $module) ?: [];
+            $mode = $this->detectTenancyModeFromSegments($segments);
+
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        $path = $blueprint->path();
+
+        if ($path !== '') {
+            $segments = array_filter(
+                preg_split('#[\\/]+#', $path) ?: [],
+                static fn ($segment) => is_string($segment) && $segment !== ''
+            );
+
+            $mode = $this->detectTenancyModeFromSegments($segments);
+
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        return 'central';
+    }
+
+    /**
+     * @param iterable<int, string> $segments
+     */
+    private function detectTenancyModeFromSegments(iterable $segments): ?string
+    {
+        foreach ($segments as $segment) {
+            if (! is_string($segment)) {
+                continue;
+            }
+
+            $candidate = strtolower(trim($segment));
+
+            if (in_array($candidate, ['central', 'tenant', 'shared'], true)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function pathEndsWithSegment(string $path, string $segment): bool
+    {
+        $normalizedPath = rtrim(str_replace('\\', '/', $path), '/');
+        $normalizedSegment = trim(str_replace('\\', '/', $segment), '/');
+
+        if ($normalizedSegment === '') {
+            return false;
+        }
+
+        $parts = explode('/', $normalizedPath);
+        $last = end($parts);
+
+        if ($last === false) {
+            return false;
+        }
+
+        return strcasecmp($last, $normalizedSegment) === 0;
     }
 
     private function normalizeWhitespace(string $value): string
@@ -2190,9 +2531,10 @@ class DatabaseLayerGenerator implements LayerGenerator
         return dirname(__DIR__, 4);
     }
 
-    private function findExistingMigration(Blueprint $blueprint, array $options): ?array
+    private function findExistingMigration(Blueprint $blueprint, array $options, ?string $migrationsRootOverride = null): ?array
     {
-        $migrationsRoot = rtrim($options['paths']['database']['migrations'] ?? 'database/migrations', '/');
+        $migrationsRoot = $migrationsRootOverride ?? $this->resolveMigrationsRoot($blueprint, $options);
+        $migrationsRoot = rtrim($migrationsRoot, '/\\');
         $absoluteRoot = $this->toAbsolutePath($migrationsRoot);
         $table = $this->tableName($blueprint);
 
