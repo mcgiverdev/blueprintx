@@ -192,7 +192,7 @@ class DatabaseLayerGenerator implements LayerGenerator
                 'metadata' => $driver->metadata(),
             ],
             'migration' => $this->buildMigrationContext($blueprint, $relationsByField),
-            'factory' => $this->buildFactoryContext($blueprint, $namespaces, $relationsByField),
+            'factory' => $this->buildFactoryContext($blueprint, $namespaces, $relationsByField, $options),
             'relations_by_field' => $relationsByField,
         ];
     }
@@ -402,7 +402,15 @@ class DatabaseLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            $index[$field] = $relation->toArray();
+            $data = $relation->toArray();
+            $parsed = $this->parseRelationTarget($data['target'] ?? null);
+
+            if ($parsed['entity'] !== null) {
+                $data['target'] = $parsed['entity'];
+                $data['target_module'] = $parsed['module'];
+            }
+
+            $index[$field] = $data;
         }
 
         foreach ($blueprint->fields() as $field) {
@@ -415,7 +423,10 @@ class DatabaseLayerGenerator implements LayerGenerator
             $inferred = $this->inferBelongsToRelation($field);
 
             if ($inferred !== null) {
-                $index[$name] = $inferred;
+                if ($inferred !== null) {
+                    $inferred['target_module'] = null;
+                    $index[$name] = $inferred;
+                }
             }
         }
 
@@ -1241,7 +1252,7 @@ class DatabaseLayerGenerator implements LayerGenerator
      * @param array<string, mixed> $relationsByField
      * @return array<string, mixed>
      */
-    private function buildFactoryContext(Blueprint $blueprint, array $namespaces, array $relationsByField): array
+    private function buildFactoryContext(Blueprint $blueprint, array $namespaces, array $relationsByField, array $options): array
     {
         $entity = Str::studly($blueprint->entity());
         $moduleNamespace = $this->moduleSegment($blueprint);
@@ -1286,7 +1297,8 @@ class DatabaseLayerGenerator implements LayerGenerator
             if ($relation !== null && ($relation['type'] ?? null) === 'belongsTo') {
                 $target = (string) ($relation['target'] ?? '');
                 if ($target !== '') {
-                    $imports[] = $this->modelNamespaceForRelation($blueprint, $target);
+                    $targetModule = is_string($relation['target_module'] ?? null) ? $relation['target_module'] : null;
+                    $imports[] = $this->modelNamespaceForRelation($blueprint, $target, $targetModule, $options);
                 }
             }
         }
@@ -1328,9 +1340,10 @@ class DatabaseLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            $target = Str::studly($relation->target);
+            $parsed = $this->parseRelationTarget($relation->target);
+            $target = $parsed['entity'];
 
-            if ($target === '') {
+            if ($target === null || $target === '') {
                 continue;
             }
 
@@ -1374,7 +1387,78 @@ class DatabaseLayerGenerator implements LayerGenerator
         return $namespace . '\\Models\\' . $entity;
     }
 
-    private function modelNamespaceForRelation(Blueprint $blueprint, string $target): string
+    private function modelNamespaceForRelation(Blueprint $blueprint, string $target, ?string $targetModule, array $options): string
+    {
+        if ($targetModule !== null && $targetModule !== '') {
+            return 'App\\Domain\\' . $targetModule . '\\Models\\' . Str::studly($target);
+        }
+
+        $history = $this->loadHistory();
+        $seeders = $history['seeders'] ?? [];
+
+        if (! is_array($seeders)) {
+            $seeders = [];
+        }
+
+        $targetStudly = Str::studly($target);
+        $candidates = [];
+
+        foreach ($seeders as $moduleData) {
+            if (! is_array($moduleData)) {
+                continue;
+            }
+
+            $entities = $moduleData['entities'] ?? [];
+
+            if (! is_array($entities) || ! isset($entities[$targetStudly])) {
+                continue;
+            }
+
+            $entityMeta = $entities[$targetStudly];
+
+            if (! is_array($entityMeta)) {
+                continue;
+            }
+
+            $model = $entityMeta['model'] ?? null;
+
+            if (! is_string($model) || $model === '') {
+                continue;
+            }
+
+            $moduleStudly = $moduleData['module_studly'] ?? null;
+            $moduleStudly = is_string($moduleStudly) && $moduleStudly !== '' ? $moduleStudly : null;
+            $scope = $this->normalizeSeederScope($moduleData['scope'] ?? null, $moduleStudly);
+
+            $candidates[] = [
+                'model' => $model,
+                'scope' => $scope,
+            ];
+        }
+
+        if ($candidates !== []) {
+            $sourceScope = $this->determineSeederScope($blueprint, $options);
+            $preferredScope = $sourceScope === 'tenant' ? 'tenant' : 'central';
+
+            foreach ($candidates as $candidate) {
+                if (($candidate['scope'] ?? null) === $preferredScope) {
+                    return $candidate['model'];
+                }
+            }
+
+            foreach ($candidates as $candidate) {
+                if (($candidate['scope'] ?? null) === 'central') {
+                    return $candidate['model'];
+                }
+            }
+
+            return $candidates[0]['model'];
+        }
+
+        return $this->defaultModelNamespaceForRelation($blueprint, $target);
+    }
+
+    private function defaultModelNamespaceForRelation(Blueprint $blueprint, string $target): string
     {
         $module = $this->moduleSegment($blueprint);
         $namespace = 'App\\Domain';
@@ -1383,9 +1467,7 @@ class DatabaseLayerGenerator implements LayerGenerator
             $namespace .= '\\' . $module;
         }
 
-        $namespace .= '\\Models\\' . Str::studly($target);
-
-        return $namespace;
+        return $namespace . '\\Models\\' . Str::studly($target);
     }
 
     /**
@@ -2048,6 +2130,59 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         return 'central';
+    }
+
+    /**
+     * @return array{entity: ?string, module: ?string}
+     */
+    private function parseRelationTarget(?string $target): array
+    {
+        if (! is_string($target)) {
+            return ['entity' => null, 'module' => null];
+        }
+
+        $normalized = trim($target);
+
+        if ($normalized === '') {
+            return ['entity' => null, 'module' => null];
+        }
+
+        $normalized = str_replace('\\', '/', $normalized);
+        $segments = array_values(array_filter(
+            explode('/', $normalized),
+            static fn (string $segment): bool => trim($segment) !== ''
+        ));
+
+        if ($segments === []) {
+            return ['entity' => null, 'module' => null];
+        }
+
+        $entitySegment = array_pop($segments);
+
+        if ($entitySegment === null || $entitySegment === '') {
+            return ['entity' => null, 'module' => null];
+        }
+
+        $entity = Str::studly($entitySegment);
+
+        $module = null;
+
+        if ($segments !== []) {
+            $module = implode('\\', array_map(static fn (string $segment): string => Str::studly($segment), $segments));
+        }
+
+        if ($entity === '') {
+            $entity = null;
+        }
+
+        if ($module === '') {
+            $module = null;
+        }
+
+        return [
+            'entity' => $entity,
+            'module' => $module,
+        ];
     }
 
     private function extractRunBody(string $contents): string
