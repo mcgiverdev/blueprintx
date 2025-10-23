@@ -99,7 +99,7 @@ return [
                     'install' => [
                         'composer require stancl/tenancy',
                         'php artisan tenancy:install',
-                        'php artisan migrate',
+                        'php artisan migrate:fresh',
                     ],
                     'guide_url' => 'https://tenancyforlaravel.com/docs/v4/',
                 ],

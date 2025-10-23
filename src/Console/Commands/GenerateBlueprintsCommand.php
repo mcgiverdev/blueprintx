@@ -18,6 +18,7 @@ use BlueprintX\Validation\ValidationMessage;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Throwable;
+use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Process\Process;
 
 class GenerateBlueprintsCommand extends Command
@@ -1045,7 +1046,10 @@ SIGNATURE;
                 continue;
             }
 
-            $shouldInstall = $this->confirm(sprintf('¿Deseas instalar "%s" ahora?', $label), false);
+            $shouldInstall = $this->askLocalizedConfirmation(
+                sprintf('¿Deseas instalar "%s" ahora?', $label),
+                false
+            );
 
             if (! $shouldInstall) {
                 $this->line('  Ejecuta manualmente:');
@@ -1628,6 +1632,42 @@ SIGNATURE;
         }
 
         return false;
+    }
+
+    private function askLocalizedConfirmation(string $question, bool $default = false): bool
+    {
+        if (! ($this->input instanceof InputInterface) || ! $this->input->isInteractive()) {
+            return $default;
+        }
+
+        $hint = $default ? '[S/n]' : '[s/N]';
+
+        while (true) {
+            $response = $this->ask(sprintf('%s %s', $question, $hint));
+
+            if ($response === null || trim($response) === '') {
+                return $default;
+            }
+
+            $normalized = $this->normalizeConfirmationResponse($response);
+
+            if ($normalized !== null) {
+                return $normalized;
+            }
+
+            $this->warn('  Responde "sí" o "no".');
+        }
+    }
+
+    private function normalizeConfirmationResponse(string $response): ?bool
+    {
+        $normalized = Str::lower(trim($response));
+
+        return match ($normalized) {
+            'y', 'yes', 's', 'si', 'sí' => true,
+            'n', 'no' => false,
+            default => null,
+        };
     }
 
     private function formatFileDetails(array $file): string
