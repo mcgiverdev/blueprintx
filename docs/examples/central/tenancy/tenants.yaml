@@ -1,5 +1,5 @@
 # Blueprint base generado por BlueprintX (tenancy)
-# Driver detectado: None
+# Driver detectado: stancl/tenancy
 module: tenancy
 entity: Tenant
 table: tenants
@@ -7,7 +7,6 @@ architecture: hexagonal
 tenancy:
   mode: central
   storage: central
-  connection: central
   routing_scope: central
   seed_scope: central
 fields:
@@ -15,71 +14,34 @@ fields:
     type: uuid
   - name: name
     type: string
-    rules: 'required|string|max:120'
+    rules: required|string|max:120
   - name: slug
     type: string
-    rules: 'required|string|max:120|regex:/^[a-z0-9-]+$/|unique:tenants,slug'
+    rules: nullable|string|max:120
   - name: domain
     type: string
-    rules: 'required|string|max:191|regex:/^[a-z0-9-]+\.generadorbackend\.test$/i|unique:tenants,domain'
-  - name: central_connection
-    type: string
-    rules: 'nullable|string|max:120'
-  - name: default_database
-    type: string
-    rules: 'required|string|max:120|regex:/^[a-z0-9_]+$/|unique:tenants,default_database'
-  - name: plan
-    type: string
-    rules: 'required|string|in:starter,growth,enterprise'
-  - name: status
-    type: string
-    rules: 'required|string|in:pending,provisioning,active,suspended,failed'
-  - name: owner_id
-    type: uuid
-    rules: 'required|uuid|exists:users,id'
+    rules: nullable|string|max:191
   - name: active
     type: boolean
     default: true
-  - name: onboarded_at
-    type: datetime
-    rules: 'nullable|date'
-  - name: suspended_at
-    type: datetime
-    rules: 'nullable|date'
 options:
   timestamps: true
   softDeletes: true
-  audited: true
-relations:
-  - type: belongsTo
-    target: User
-    field: owner_id
-    alias: owner
+relations: []
 api:
   base_path: /tenancy/tenants
   middleware:
     - auth:sanctum
-    - role:super-admin
+    - tenant
   endpoints:
     - type: crud
     - type: search
       fields:
         - name
         - domain
-        - plan
-        - status
   resources:
     includes: []
 docs:
-  summary: 'Gestión centralizada de tenants con aprovisionamiento y validación de dominio.'
-  description: >-
-    Permite crear, activar, suspender y auditar tenants. Las reglas de dominio validan subdominios del host central
-    (`{slug}.generadorbackend.test`). El proceso de negocio debe provisionar bases de datos, dominios y catálogos
-    compartidos tras persistir cada registro y generar el administrador inicial del tenant.
+  summary: 'Blueprint base para gestionar tenants'
 errors: []
-metadata:
-  owner: 'Platform Ops'
-  tags:
-    - tenancy
-    - provisioning
-  version: '1.1.0'
+metadata: []
