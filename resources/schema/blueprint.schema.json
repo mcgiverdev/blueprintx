@@ -515,6 +515,12 @@
             "null"
           ]
         },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "tags": {
           "type": "array",
           "items": {

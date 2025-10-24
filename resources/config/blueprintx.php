@@ -2,7 +2,7 @@
 
 return [
     'paths' => [
-        'blueprints' => base_path('blueprints'),
+        'blueprints' => env('BLUEPRINTX_BLUEPRINTS_PATH', base_path('blueprints')),
         'templates' => resource_path('vendor/blueprintx/templates'),
         'output' => base_path(),
         'api' => 'app/Http/Controllers/Api',
