@@ -363,9 +363,9 @@ class InfrastructureLayerGenerator implements LayerGenerator
         $parsed = $this->parseServiceProvider($existingContents ?? '');
         $bindings = $parsed['bindings'];
 
-        $bindings[$interfaceFqcn] = $implementationFqcn;
+    $bindings[$interfaceFqcn] = $implementationFqcn;
 
-        $rendered = $this->renderServiceProvider($bindings, $parsed['uses']);
+    $rendered = $this->renderServiceProvider($bindings, $parsed['uses']);
 
         if ($existingContents !== null && trim($existingContents) === trim($rendered)) {
             return null;
@@ -424,7 +424,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
             }
         }
 
-        return ['bindings' => $bindings, 'uses' => $uses];
+    return ['bindings' => $bindings, 'uses' => $uses];
     }
 
     /**
@@ -450,32 +450,17 @@ class InfrastructureLayerGenerator implements LayerGenerator
 
         usort($entries, static fn (array $a, array $b): int => strcmp($a['interface'], $b['interface']));
 
-        $imports = [];
+        $imports = $this->collectServiceProviderImports($entries, $existingUses);
+        $aliases = $this->buildImportAliases($imports);
 
-        $this->addImport($imports, 'Illuminate\\Support\\ServiceProvider', 'ServiceProvider');
-
-        foreach ($existingUses as $use) {
-            $this->addImport($imports, $use['fqcn'], $use['alias']);
-        }
-
-        foreach ($entries as $entry) {
-            $this->addImport($imports, $entry['interface']);
-            $this->addImport($imports, $entry['implementation']);
-        }
-
-        $aliasMap = $this->assignImportAliases($imports);
-
-        usort($imports, function (array $left, array $right) use ($aliasMap): int {
-            $leftAlias = $aliasMap[$this->normalizeClassName($left['fqcn'])];
-            $rightAlias = $aliasMap[$this->normalizeClassName($right['fqcn'])];
-
-            return strcmp($leftAlias, $rightAlias);
-        });
-
-        $seen = [];
         $useLines = [];
 
-        foreach ($imports as $import) {
+        $sortedImports = array_values($imports);
+        usort($sortedImports, static fn (array $a, array $b): int => strcmp($a['alias'] ?? $a['fqcn'], $b['alias'] ?? $b['fqcn']));
+
+        $seen = [];
+
+        foreach ($sortedImports as $import) {
             $fqcn = $this->normalizeClassName($import['fqcn']);
 
             if (isset($seen[$fqcn])) {
@@ -484,7 +469,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
 
             $seen[$fqcn] = true;
 
-            $alias = $aliasMap[$fqcn];
+            $alias = $aliases[$fqcn];
             $base = $this->classBasename($fqcn);
 
             if ($alias !== null && $alias !== '' && $alias !== $base) {
@@ -496,9 +481,9 @@ class InfrastructureLayerGenerator implements LayerGenerator
 
         $useBlock = implode("\n", $useLines);
 
-        $bindingLines = array_map(function (array $entry) use ($aliasMap): string {
-            $interfaceAlias = $aliasMap[$this->normalizeClassName($entry['interface'])];
-            $implementationAlias = $aliasMap[$this->normalizeClassName($entry['implementation'])];
+        $bindingLines = array_map(function (array $entry) use ($aliases): string {
+            $interfaceAlias = $aliases[$this->normalizeClassName($entry['interface'])];
+            $implementationAlias = $aliases[$this->normalizeClassName($entry['implementation'])];
 
             return sprintf(
                 '        $this->app->bind(%s::class, %s::class);',
@@ -526,100 +511,124 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
 {$registerBody}    }
+        private function collectServiceProviderImports(array $entries, array $existingUses): array
+        {
+            $imports = [];
 
-    /**
-     * Bootstrap any application services.
-     */
-    public function boot(): void
-    {
-        //
-    }
-}
+            $imports['Illuminate\\Support\\ServiceProvider'] = [
+                'fqcn' => 'Illuminate\\Support\\ServiceProvider',
+                'alias' => 'ServiceProvider',
+            ];
 
-PHP;
-    }
-
-    /**
-     * @param array<int, array{fqcn: string, alias: ?string}> $imports
-     */
-    private function assignImportAliases(array $imports): array
-    {
-        $assigned = [];
-        $used = [];
-
-        foreach ($imports as $import) {
-            $fqcn = $this->normalizeClassName($import['fqcn']);
-            $alias = $import['alias'];
-
-            if ($alias === null || $alias === '') {
-                continue;
+            foreach ($existingUses as $use) {
+                $fqcn = $this->normalizeClassName($use['fqcn']);
+                $imports[$fqcn] = [
+                    'fqcn' => $fqcn,
+                    'alias' => $use['alias'],
+                ];
             }
 
-            if (isset($used[$alias])) {
-                continue;
+            foreach ($entries as $entry) {
+                foreach (['interface', 'implementation'] as $key) {
+                    $fqcn = $this->normalizeClassName($entry[$key]);
+
+                    if (! isset($imports[$fqcn])) {
+                        $imports[$fqcn] = [
+                            'fqcn' => $fqcn,
+                            'alias' => null,
+                        ];
+                    }
+                }
             }
 
-            $assigned[$fqcn] = $alias;
-            $used[$alias] = true;
+            return $imports;
         }
 
-        foreach ($imports as $import) {
-            $fqcn = $this->normalizeClassName($import['fqcn']);
+        /**
+         * @param array<string, array{fqcn: string, alias: ?string}> $imports
+         * @return array<string, string>
+         */
+        private function buildImportAliases(array $imports): array
+        {
+            $aliases = [];
+            $used = [];
+            $groups = [];
 
-            if (isset($assigned[$fqcn])) {
-                continue;
-            }
+            foreach ($imports as $fqcn => $import) {
+                $fqcn = $this->normalizeClassName($fqcn);
 
-            $alias = $this->generateImportAlias($fqcn, $used);
-            $assigned[$fqcn] = $alias;
-            $used[$alias] = true;
-        }
-
-        return $assigned;
-    }
-
-    /**
-     * @param array<int, array{fqcn: string, alias: ?string}> $imports
-     */
-    private function addImport(array &$imports, string $fqcn, ?string $alias = null): void
-    {
-        $fqcn = $this->normalizeClassName($fqcn);
-
-        foreach ($imports as &$import) {
-            if ($this->normalizeClassName($import['fqcn']) === $fqcn) {
-                if ($import['alias'] === null && $alias !== null) {
-                    $import['alias'] = $alias;
+                if ($import['alias'] !== null && $import['alias'] !== '') {
+                    $alias = $import['alias'];
+                    $aliases[$fqcn] = $alias;
+                    $used[$alias] = true;
+                    continue;
                 }
 
-                return;
+                $base = $this->classBasename($fqcn);
+                $groups[$base][] = $fqcn;
             }
+
+            foreach ($groups as $base => $fqcnList) {
+                if (count($fqcnList) === 1) {
+                    $fqcn = $fqcnList[0];
+                    $alias = $this->ensureUniqueAlias($base, $used);
+                    $aliases[$fqcn] = $alias;
+                    continue;
+                }
+
+                foreach ($fqcnList as $fqcn) {
+                    $prefix = $this->detectContextPrefix($fqcn) ?? $this->deriveNamespaceHint($fqcn) ?? '';
+                    $alias = $this->ensureUniqueAlias($prefix . $base, $used);
+                    $aliases[$fqcn] = $alias;
+                }
+            }
+
+            return $aliases;
         }
 
-        $imports[] = [
-            'fqcn' => $fqcn,
-            'alias' => $alias,
-        ];
-    }
+        private function ensureUniqueAlias(string $alias, array &$used): string
+        {
+            $candidate = $alias !== '' ? $alias : 'Alias';
+            $index = 2;
 
-    /**
-     * @param array<string, bool> $usedAliases
-     */
-    private function generateImportAlias(string $fqcn, array $usedAliases): string
-    {
-        $base = $this->classBasename($fqcn);
+            while (isset($used[$candidate])) {
+                $candidate = $alias !== '' ? $alias . $index : 'Alias' . $index;
+                ++$index;
+            }
 
-        if (! isset($usedAliases[$base])) {
-            return $base;
+            $used[$candidate] = true;
+
+            return $candidate;
         }
 
-        $segments = explode('\\', trim($fqcn, '\\'));
-        array_pop($segments);
+        private function detectContextPrefix(string $fqcn): ?string
+        {
+            if (preg_match('/\\(Central|Tenant|Shared)\\/i', $fqcn, $matches) === 1) {
+                return Str::studly($matches[1]);
+            }
 
-        while ($segments !== []) {
-            $segment = array_pop($segments);
-            $candidate = Str::studly($segment) . $base;
+            return null;
+        }
 
-            if (! isset($usedAliases[$candidate])) {
+        private function deriveNamespaceHint(string $fqcn): ?string
+        {
+            $segments = explode('\\', trim($fqcn, '\\'));
+
+            array_pop($segments);
+
+            while ($segments !== []) {
+                $segment = array_pop($segments);
+                $segment = trim($segment);
+
+                if ($segment === '' || in_array(strtolower($segment), ['repositories', 'models', 'requests', 'resources'], true)) {
+                    continue;
+                }
+
+                return Str::studly($segment);
+            }
+
+            return null;
+        }
                 return $candidate;
             }
         }
