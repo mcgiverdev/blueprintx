@@ -2869,16 +2869,63 @@ class DatabaseLayerGenerator implements LayerGenerator
         if ($laravel !== []) {
             usort($laravel, static fn (array $a, array $b): int => strcmp($a['prefix'], $b['prefix']));
 
-            return end($laravel) ?: $laravel[0];
+            $keep = $laravel[count($laravel) - 1];
+            $this->cleanupDuplicateMigrations(array_merge($laravel, $legacy), $keep['path']);
+
+            return $keep;
         }
 
         if ($legacy !== []) {
             usort($legacy, static fn (array $a, array $b): int => strcmp($a['prefix'], $b['prefix']));
 
-            return end($legacy) ?: $legacy[0];
+            $keep = $legacy[count($legacy) - 1];
+            $this->cleanupDuplicateMigrations($legacy, $keep['path']);
+
+            return $keep;
         }
 
         return null;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $records
+     */
+    private function cleanupDuplicateMigrations(array $records, string $keepPath): void
+    {
+        if ($keepPath === '') {
+            return;
+        }
+
+        $normalizedKeep = strtolower(str_replace(['\\', '/'], '/', $keepPath));
+
+        foreach ($records as $record) {
+            if (! is_array($record)) {
+                continue;
+            }
+
+            $path = $record['path'] ?? null;
+
+            if (! is_string($path) || $path === '') {
+                continue;
+            }
+
+            $normalizedPath = strtolower(str_replace(['\\', '/'], '/', $path));
+
+            if ($normalizedPath === $normalizedKeep) {
+                continue;
+            }
+
+            if (! is_file($path)) {
+                continue;
+            }
+
+            @unlink($path);
+
+            if (is_file($path)) {
+                @chmod($path, 0666);
+                @unlink($path);
+            }
+        }
     }
 
     private function toAbsolutePath(string $path): string

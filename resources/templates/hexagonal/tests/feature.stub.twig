@@ -7,7 +7,7 @@ use Tests\TestCase;
 use {{ entity.class|default('App\\Domain\\Sample\\Models\\Sample') }};
 {% for import in relation_imports %}use {{ import }};
 {% endfor %}
-{% if tests.password_fields|length > 0 %}use Illuminate\\Support\\Facades\\Hash;
+{% if tests.password_fields|length > 0 %}use Illuminate\Support\Facades\Hash;
 {% endif %}
 
 class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
@@ -79,9 +79,25 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% endif %}
 {% endfor %}
 
+{% if tests.password_fields|length > 0 %}
+        $created = {{ entity.class|class_basename }}::query()->latest('created_at')->firstOrFail();
+
+        foreach ([
+{% for field in tests.password_fields %}            '{{ field.name }}' => {{ field.store_value }},
+{% endfor %}        ] as $field => $value) {
+            $this->assertTrue(Hash::check($value, $created->$field));
+        }
+
+        $this->assertDatabaseHas('{{ blueprint.table }}', [
+            'id' => $created->id,
+{% for field in tests.store_payload %}{% if field.is_password %}            '{{ field.name }}' => $created->{{ field.name }},
+{% else %}            '{{ field.name }}' => {{ field.value }},
+{% endif %}{% endfor %}        ]);
+{% else %}
         $this->assertDatabaseHas('{{ blueprint.table }}', [
 {% for field in tests.store_payload %}            '{{ field.name }}' => {{ field.value }},
 {% endfor %}        ]);
+{% endif %}
     }
 
     public function test_can_update_{{ naming.entity_variable }}(): void
@@ -121,10 +137,26 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% endif %}
 {% endfor %}
 
-        $this->assertDatabaseHas('{{ blueprint.table }}', [
-            'id' => ${{ naming.entity_variable }}->id,
+{% if tests.password_fields|length > 0 %}
+                ${{ naming.entity_variable }}->refresh();
+
+                foreach ([
+{% for field in tests.password_fields %}            '{{ field.name }}' => {{ field.update_value }},
+{% endfor %}        ] as $field => $value) {
+                        $this->assertTrue(Hash::check($value, ${{ naming.entity_variable }}->$field));
+                }
+
+                $this->assertDatabaseHas('{{ blueprint.table }}', [
+                        'id' => ${{ naming.entity_variable }}->id,
+{% for field in tests.update_payload %}{% if field.is_password %}            '{{ field.name }}' => ${{ naming.entity_variable }}->{{ field.name }},
+{% else %}            '{{ field.name }}' => {{ field.value }},
+{% endif %}{% endfor %}        ]);
+{% else %}
+                $this->assertDatabaseHas('{{ blueprint.table }}', [
+                        'id' => ${{ naming.entity_variable }}->id,
 {% for field in tests.update_payload %}            '{{ field.name }}' => {{ field.value }},
 {% endfor %}        ]);
+{% endif %}
     }
 
     public function test_can_delete_{{ naming.entity_variable }}(): void

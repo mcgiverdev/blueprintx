@@ -11,10 +11,13 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
+use BlueprintX\Support\Concerns\ResolvesModelNamespaces;
 use Illuminate\Support\Str;
 
 class TestsLayerGenerator implements LayerGenerator
 {
+    use ResolvesModelNamespaces;
+
     private array $resourceConfig;
 
     private array $optimisticLocking;
@@ -250,11 +253,15 @@ class TestsLayerGenerator implements LayerGenerator
      */
     private function prepareRelations(Blueprint $blueprint): array
     {
-        $moduleNamespace = $this->moduleNamespace($blueprint);
-        $modulePrefix = $moduleNamespace !== null ? $moduleNamespace . '\\' : '';
-
         $relations = [];
         $existingRelationFields = [];
+        $currentDomainNamespace = $this->resolveModelNamespace(
+            $blueprint,
+            Str::studly($blueprint->entity()),
+            null,
+            null,
+            null
+        );
 
         foreach ($blueprint->relations() as $relation) {
             if (strtolower($relation->type) !== 'belongsto') {
@@ -262,23 +269,31 @@ class TestsLayerGenerator implements LayerGenerator
             }
 
             $field = $relation->field;
-            $variable = $this->relationVariableFromField($field, $relation->target);
-            $targetStudly = Str::studly($relation->target);
-            $class = sprintf('App\\Domain\\%sModels\\%s', $modulePrefix, $targetStudly);
+            $parsedTarget = $this->parseRelationTarget($relation->target);
+            $targetStudly = $parsedTarget['entity'] ?? Str::studly($relation->target);
+            $targetModule = $parsedTarget['module'];
+            $variable = $this->relationVariableFromField($field, $targetStudly);
+            $classFqcn = $this->resolveRelatedModelFqcn(
+                $blueprint,
+                $targetStudly,
+                $targetModule,
+                $currentDomainNamespace,
+                null
+            );
 
             $relations[] = [
                 'name' => $relation->target,
                 'field' => $field,
                 'variable' => $variable,
-                'import' => $class,
-                'class' => $class,
-                'method' => Str::camel($relation->target),
+                'import' => $classFqcn,
+                'class' => $classFqcn,
+                'method' => Str::camel($targetStudly),
             ];
 
             $existingRelationFields[] = $field;
         }
 
-        $implicitRelations = $this->inferImplicitBelongsToRelations($blueprint, $existingRelationFields, $modulePrefix);
+        $implicitRelations = $this->inferImplicitBelongsToRelations($blueprint, $existingRelationFields, $currentDomainNamespace);
 
         return array_merge($relations, $implicitRelations);
     }
@@ -330,7 +345,7 @@ class TestsLayerGenerator implements LayerGenerator
     private function inferImplicitBelongsToRelations(
         Blueprint $blueprint,
         array $existingRelationFields,
-        string $moduleNamespace
+        string $currentDomainNamespace
     ): array {
         $relations = [];
 
@@ -354,7 +369,13 @@ class TestsLayerGenerator implements LayerGenerator
             }
 
             $variable = $this->relationVariableFromField($fieldName, $targetStudly);
-            $class = sprintf('App\\Domain\\%sModels\\%s', $moduleNamespace, $targetStudly);
+            $class = $this->resolveRelatedModelFqcn(
+                $blueprint,
+                $targetStudly,
+                null,
+                $currentDomainNamespace,
+                null
+            );
 
             $relations[] = [
                 'name' => $targetStudly,
@@ -434,11 +455,12 @@ class TestsLayerGenerator implements LayerGenerator
             $relationMap[$relation['field']] = $relation;
         }
 
-        $storePayload = [];
-        $updatePayload = [];
-        $factoryOverrides = [];
-        $storeResponseFragment = [];
-        $updateResponseFragment = [];
+    $storePayload = [];
+    $updatePayload = [];
+    $factoryOverrides = [];
+    $storeResponseFragment = [];
+    $updateResponseFragment = [];
+    $passwordFields = [];
 
         foreach ($blueprint->fields() as $field) {
             $fieldName = $field->name;
@@ -456,12 +478,14 @@ class TestsLayerGenerator implements LayerGenerator
                     'name' => $fieldName,
                     'value' => $variable,
                     'is_relation' => true,
+                    'is_password' => false,
                 ];
 
                 $updatePayload[] = [
                     'name' => $fieldName,
                     'value' => $variable,
                     'is_relation' => true,
+                    'is_password' => false,
                 ];
 
                 $factoryOverrides[] = [
@@ -478,10 +502,13 @@ class TestsLayerGenerator implements LayerGenerator
                 continue;
             }
 
+            $isPassword = $this->isPasswordField($fieldName);
+
             $storePayload[] = [
                 'name' => $fieldName,
                 'value' => $storeValue,
                 'is_relation' => false,
+                'is_password' => $isPassword,
             ];
 
             if ($updateValue === null) {
@@ -492,7 +519,16 @@ class TestsLayerGenerator implements LayerGenerator
                 'name' => $fieldName,
                 'value' => $updateValue,
                 'is_relation' => false,
+                'is_password' => $isPassword,
             ];
+
+            if ($isPassword) {
+                $passwordFields[] = [
+                    'name' => $fieldName,
+                    'store_value' => $storeValue,
+                    'update_value' => $updateValue,
+                ];
+            }
         }
 
         foreach ($storePayload as $payload) {
@@ -533,7 +569,23 @@ class TestsLayerGenerator implements LayerGenerator
             'update_response_fragment' => $updateResponseFragment,
             'index_count' => 3,
             'uses_soft_deletes' => (bool) ($blueprint->options()['softDeletes'] ?? false),
+            'password_fields' => $passwordFields,
         ];
+    }
+
+    private function isPasswordField(string $fieldName): bool
+    {
+        $normalized = strtolower($fieldName);
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        if ($normalized === 'password') {
+            return true;
+        }
+
+        return str_contains($normalized, 'password');
     }
 
     private function resolveResourceIncludes(Blueprint $blueprint, array $relations): array

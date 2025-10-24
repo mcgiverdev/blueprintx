@@ -11,10 +11,13 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
+use BlueprintX\Support\Concerns\ResolvesModelNamespaces;
 use Illuminate\Support\Str;
 
 class InfrastructureLayerGenerator implements LayerGenerator
 {
+    use ResolvesModelNamespaces;
+
     public function __construct(private readonly TemplateEngine $templates)
     {
     }
@@ -158,6 +161,7 @@ class InfrastructureLayerGenerator implements LayerGenerator
         return [
             'models' => $root . '\\Models',
             'repositories' => $root . '\\Repositories',
+            'shared_root' => $base,
         ];
     }
 
@@ -272,6 +276,8 @@ class InfrastructureLayerGenerator implements LayerGenerator
         $relations = [];
         $selfClass = Str::studly($blueprint->entity());
         $domainModelsNamespace = $domainNamespaces['models'];
+        $sharedRootNamespace = $domainNamespaces['shared_root'] ?? 'App\\Domain';
+        $selfFqcn = $domainModelsNamespace . '\\' . $selfClass;
 
         foreach ($blueprint->relations() as $relation) {
             $type = strtolower($relation->type);
@@ -281,11 +287,13 @@ class InfrastructureLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            $relatedClass = Str::studly($target);
+            $parsedTarget = $this->parseRelationTarget($target);
+            $relatedClass = $parsedTarget['entity'] ?? Str::studly($target);
+            $targetModule = $parsedTarget['module'];
             $methodName = match ($type) {
-                'belongsto' => Str::camel($target),
-                'hasmany', 'belongstomany' => Str::camel(Str::plural($target)),
-                'hasone' => Str::camel($target),
+                'belongsto' => Str::camel($relatedClass),
+                'hasmany', 'belongstomany' => Str::camel(Str::plural($relatedClass)),
+                'hasone' => Str::camel($relatedClass),
                 default => null,
             };
 
@@ -313,9 +321,16 @@ class InfrastructureLayerGenerator implements LayerGenerator
                 $relationReturnTypes[] = $returnType;
             }
 
-            $relatedFqcn = $domainModelsNamespace . '\\' . $relatedClass;
+            $relatedNamespace = $this->resolveModelNamespace(
+                $blueprint,
+                $relatedClass,
+                $targetModule,
+                $domainModelsNamespace,
+                $sharedRootNamespace
+            );
+            $relatedFqcn = $relatedNamespace . '\\' . $relatedClass;
 
-            if ($relatedClass !== $selfClass && ! in_array($relatedFqcn, $relationImports, true)) {
+            if ($relatedFqcn !== $selfFqcn && ! in_array($relatedFqcn, $relationImports, true)) {
                 $relationImports[] = $relatedFqcn;
             }
 
@@ -356,7 +371,9 @@ class InfrastructureLayerGenerator implements LayerGenerator
      */
     private function makeAppServiceProviderFile(array $context, array $options): ?GeneratedFile
     {
-        if ($this->determineTenancyMode($context['blueprint'] ?? []) !== 'central') {
+        $tenancyMode = $this->determineTenancyMode($context['blueprint'] ?? []);
+
+        if (! in_array($tenancyMode, ['central', 'shared'], true)) {
             return null;
         }
 

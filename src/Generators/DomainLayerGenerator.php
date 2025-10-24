@@ -11,10 +11,13 @@ use BlueprintX\Contracts\LayerGenerator;
 use BlueprintX\Kernel\Generation\GeneratedFile;
 use BlueprintX\Kernel\Generation\GenerationResult;
 use BlueprintX\Kernel\TemplateEngine;
+use BlueprintX\Support\Concerns\ResolvesModelNamespaces;
 use Illuminate\Support\Str;
 
 class DomainLayerGenerator implements LayerGenerator
 {
+    use ResolvesModelNamespaces;
+
     public function __construct(private readonly TemplateEngine $templates)
     {
     }
@@ -399,12 +402,14 @@ class DomainLayerGenerator implements LayerGenerator
             $identifierKeyType = 'string';
         }
 
-    $relationReturnTypes = [];
-    $relationImports = [];
-    $relations = [];
-    $relationMethodNames = [];
-    $selfClass = Str::studly($blueprint->entity());
-    $domainModelsNamespace = $namespaces['domain_models'];
+        $relationReturnTypes = [];
+        $relationImports = [];
+        $relations = [];
+        $relationMethodNames = [];
+        $selfClass = Str::studly($blueprint->entity());
+        $domainModelsNamespace = $namespaces['domain_models'];
+        $sharedRootNamespace = $namespaces['shared_root'] ?? 'App\\Domain';
+        $selfFqcn = $domainModelsNamespace . '\\' . $selfClass;
 
         foreach ($blueprint->relations() as $relation) {
             $type = strtolower($relation->type);
@@ -414,7 +419,9 @@ class DomainLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            $relatedClass = Str::studly($target);
+            $parsedTarget = $this->parseRelationTarget($target);
+            $relatedClass = $parsedTarget['entity'] ?? Str::studly($target);
+            $targetModule = $parsedTarget['module'];
             $methodBaseName = $this->deriveRelationMethodBaseName($type, $relation, $target);
 
             $eloquentMethod = match ($type) {
@@ -444,9 +451,16 @@ class DomainLayerGenerator implements LayerGenerator
                 $relationReturnTypes[] = $returnType;
             }
 
-            $relatedFqcn = $domainModelsNamespace . '\\' . $relatedClass;
+            $relatedNamespace = $this->resolveModelNamespace(
+                $blueprint,
+                $relatedClass,
+                $targetModule,
+                $domainModelsNamespace,
+                $sharedRootNamespace
+            );
+            $relatedFqcn = $relatedNamespace . '\\' . $relatedClass;
 
-            if ($relatedClass !== $selfClass && ! in_array($relatedFqcn, $relationImports, true)) {
+            if ($relatedFqcn !== $selfFqcn && ! in_array($relatedFqcn, $relationImports, true)) {
                 $relationImports[] = $relatedFqcn;
             }
 
