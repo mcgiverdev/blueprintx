@@ -63,7 +63,6 @@ class TestsLayerGenerator implements LayerGenerator
     private function buildContext(Blueprint $blueprint, ArchitectureDriver $driver, array $options): array
     {
     $relations = $this->prepareRelations($blueprint);
-    $relationImports = $this->uniqueRelationImports($relations);
         $payloads = $this->prepareFieldPayloads($blueprint, $relations);
 
         $naming = $this->namingContext($blueprint);
@@ -84,6 +83,11 @@ class TestsLayerGenerator implements LayerGenerator
             'endpoints' => array_map(static fn (Endpoint $endpoint): array => $endpoint->toArray(), $blueprint->endpoints()),
             'class' => $this->resolveModelClass($blueprint),
         ];
+
+        $relationImports = array_values(array_filter(
+            $this->uniqueRelationImports($relations),
+            static fn (string $import) => $import !== ($entity['class'] ?? null)
+        ));
 
         return [
             'blueprint' => $blueprint->toArray(),

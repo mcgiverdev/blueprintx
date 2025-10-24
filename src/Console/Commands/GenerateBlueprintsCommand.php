@@ -1046,10 +1046,23 @@ SIGNATURE;
                 continue;
             }
 
-            $shouldInstall = $this->askLocalizedConfirmation(
-                sprintf('¿Deseas instalar "%s" ahora?', $label),
-                false
-            );
+            $shouldInstall = false;
+            $interactive = $this->input->isInteractive();
+
+            if ($interactive && function_exists('app')) {
+                try {
+                    $interactive = ! app()->environment('testing');
+                } catch (Throwable $exception) {
+                    $interactive = false;
+                }
+            }
+
+            if ($interactive) {
+                $shouldInstall = $this->askLocalizedConfirmation(
+                    sprintf('¿Deseas instalar "%s" ahora?', $label),
+                    false
+                );
+            }
 
             if (! $shouldInstall) {
                 $this->line('  Ejecuta manualmente:');
@@ -1088,9 +1101,15 @@ SIGNATURE;
         $basePath = function_exists('base_path') ? base_path() : getcwd();
 
         foreach ($commands as $command) {
-            $this->line(sprintf('    $ %s', $command));
+            $preparedCommand = $this->prepareInstallCommand($command);
 
-            $process = Process::fromShellCommandline($command, $basePath ?: null);
+            if ($preparedCommand === '') {
+                continue;
+            }
+
+            $this->line(sprintf('    $ %s', $preparedCommand));
+
+            $process = Process::fromShellCommandline($preparedCommand, $basePath ?: null);
             $process->setTimeout(null);
 
             $exitCode = $process->run(function ($type, $buffer): void {
@@ -1103,6 +1122,29 @@ SIGNATURE;
         }
 
         return true;
+    }
+
+    private function prepareInstallCommand(string $command): string
+    {
+        $trimmed = trim($command);
+
+        if ($trimmed === '') {
+            return '';
+        }
+
+        if (preg_match('/^php\s+artisan\s+([^\s]+)/', $trimmed, $matches) === 1) {
+            $artisanCommand = $matches[1];
+
+            if (str_starts_with($artisanCommand, 'migrate') && ! str_contains($trimmed, '--force')) {
+                $trimmed .= ' --force';
+            }
+
+            if (! str_contains($trimmed, '--no-interaction')) {
+                $trimmed .= ' --no-interaction';
+            }
+        }
+
+        return $trimmed;
     }
 
     private function isComposerPackageInstalled(string $package): bool

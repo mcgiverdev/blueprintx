@@ -72,6 +72,7 @@ final class GenerationHistoryManager
         $manifest = [
             'id' => $runId,
             'timestamp' => (new DateTimeImmutable())->format(DATE_ATOM),
+            'sequence' => microtime(true),
             'execution_id' => $context['execution_id'] ?? null,
             'blueprint' => [
                 'module' => $blueprint->module(),
@@ -152,6 +153,13 @@ final class GenerationHistoryManager
         }
 
         usort($entries, static function (array $left, array $right): int {
+            $leftSequence = isset($left['manifest']['sequence']) ? (float) $left['manifest']['sequence'] : null;
+            $rightSequence = isset($right['manifest']['sequence']) ? (float) $right['manifest']['sequence'] : null;
+
+            if ($leftSequence !== null && $rightSequence !== null && $leftSequence !== $rightSequence) {
+                return $rightSequence <=> $leftSequence;
+            }
+
             $leftTime = isset($left['manifest']['timestamp']) ? strtotime((string) $left['manifest']['timestamp']) : false;
             $rightTime = isset($right['manifest']['timestamp']) ? strtotime((string) $right['manifest']['timestamp']) : false;
 
