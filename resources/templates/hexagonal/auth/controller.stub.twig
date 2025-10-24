@@ -119,7 +119,7 @@ class {{ controller_class }} extends Controller
             return response()->json(null, Response::HTTP_UNAUTHORIZED);
         }
 
-    return {{ userResourceClass }}::make($user)->response();
+        return {{ userResourceClass }}::make($user)->response();
     }
 
     private function tokenExpirationTimestamp(): ?string

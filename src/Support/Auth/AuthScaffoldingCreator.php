@@ -186,20 +186,20 @@ class AuthScaffoldingCreator
         $tenancyMode = $this->determineTenancyMode($model);
         $contextKey = $this->normalizeContextKey($key, $tenancyMode);
         $studlyKey = Str::studly($contextKey);
-    $controllerNamespace = $this->appendNamespace($controllersNamespace, 'Auth\\' . $studlyKey);
+        $controllerNamespace = $this->appendNamespace($controllersNamespace, $studlyKey . '\\Auth');
         $controllerClass = $studlyKey . 'AuthController';
-        $controllerPath = $this->resolveAbsolutePath($controllersPath, sprintf('Auth/%s/%s.php', $studlyKey, $controllerClass));
-    $controllerFqn = $controllerNamespace . '\\' . $controllerClass;
+        $controllerPath = $this->resolveAbsolutePath($controllersPath, sprintf('%s/Auth/%s.php', $studlyKey, $controllerClass));
+        $controllerFqn = $controllerNamespace . '\\' . $controllerClass;
 
-    $requestsNamespaceFull = $this->appendNamespace($requestsNamespace, 'Auth\\' . $studlyKey);
+        $requestsNamespaceFull = $this->appendNamespace($requestsNamespace, $studlyKey . '\\Auth');
         $loginClass = $studlyKey . 'LoginRequest';
         $registerClass = $studlyKey . 'RegisterRequest';
-        $loginPath = $this->resolveAbsolutePath($requestsPath, sprintf('Auth/%s/%s.php', $studlyKey, $loginClass));
-        $registerPath = $this->resolveAbsolutePath($requestsPath, sprintf('Auth/%s/%s.php', $studlyKey, $registerClass));
+        $loginPath = $this->resolveAbsolutePath($requestsPath, sprintf('%s/Auth/%s.php', $studlyKey, $loginClass));
+        $registerPath = $this->resolveAbsolutePath($requestsPath, sprintf('%s/Auth/%s.php', $studlyKey, $registerClass));
 
-    $resourceNamespace = $this->appendNamespace($resourcesNamespace, 'Auth\\' . $studlyKey);
+        $resourceNamespace = $this->appendNamespace($resourcesNamespace, $studlyKey . '\\Auth');
         $resourceClass = $studlyKey . 'UserResource';
-        $resourcePath = $this->resolveAbsolutePath($resourcesPath, sprintf('Auth/%s/%s.php', $studlyKey, $resourceClass));
+        $resourcePath = $this->resolveAbsolutePath($resourcesPath, sprintf('%s/Auth/%s.php', $studlyKey, $resourceClass));
 
         $userModelFqn = $this->resolveDomainUserFqn($model);
 
@@ -634,18 +634,22 @@ class AuthScaffoldingCreator
 
     private function synchronizeDefaultUserProvider(string $block, string $indent, string $modelFqn): string
     {
-        $pattern = "#('users'\\s*=>\\s*\\[\\s*(?:\\n|.)*?'model'\\s*=>\\s*)[^,]+,#";
-        $replacement = "$1env('AUTH_MODEL', " . $modelFqn . "::class),";
+    $pattern = "#('users'\\s*=>\\s*\\[[\\s\\S]*?'model'\\s*=>\\s*)(.+?)(\\r?\\n)#";
+    $replacement = "$1env('AUTH_MODEL', %s::class),$3";
 
-        $updated = preg_replace($pattern, $replacement, $block, 1);
+    $updated = preg_replace($pattern, sprintf($replacement, $modelFqn), $block, 1);
 
         return $updated !== null ? $updated : $block;
     }
 
     private function removeLegacyAuthRoutes(string $contents, string $controllersNamespace): string
     {
-        $legacyUse = sprintf("use %s\\\\Auth\\\\AuthController;\n", trim($controllersNamespace, '\\'));
-        $contents = str_replace($legacyUse, '', $contents);
+    $namespaceRoot = trim($controllersNamespace, '\\');
+    $legacyUsePattern = sprintf('#^use %s\\\\Auth\\\\[A-Za-z\\\\]+AuthController;\n#m', preg_quote($namespaceRoot, '#'));
+    $contents = preg_replace($legacyUsePattern, '', $contents) ?? $contents;
+
+    $directLegacy = sprintf("use %s\\\\Auth\\\\AuthController;\n", $namespaceRoot);
+    $contents = str_replace($directLegacy, '', $contents);
 
         $contents = preg_replace_callback(
             "#\nRoute::prefix\('auth'\)->group\(function \(\): void \{\n(?:(?:    ).+\n)*?\}\);\n#s",
@@ -1278,14 +1282,35 @@ class AuthScaffoldingCreator
             return null;
         }
 
-        if (! is_string($module) || $module === '') {
-            $module = 'Shared';
-        }
-
-        $moduleSegment = Str::studly($module);
         $entitySegment = Str::studly($entity);
 
+        $moduleSegment = $this->normalizeModuleNamespace($module);
+
         return sprintf('App\\Domain\\%s\\Models\\%s', $moduleSegment, $entitySegment);
+    }
+
+    private function normalizeModuleNamespace(mixed $module): string
+    {
+        if (! is_string($module) || $module === '') {
+            return 'Shared';
+        }
+
+        $normalized = str_replace(['\\', '/'], '/', strtolower(trim($module)));
+        $normalized = preg_replace('/[^a-z0-9_\/]+/', '', (string) $normalized);
+
+        if ($normalized === '' || $normalized === null) {
+            return 'Shared';
+        }
+
+        $segments = array_filter(explode('/', (string) str_replace('_', '/', $normalized)), static fn (string $segment): bool => $segment !== '');
+
+        if ($segments === []) {
+            return 'Shared';
+        }
+
+        $studlySegments = array_map(static fn (string $segment): string => Str::studly($segment), $segments);
+
+        return implode('\\', $studlySegments);
     }
 
     private function deriveDomainAlias(string $domainFqn): string

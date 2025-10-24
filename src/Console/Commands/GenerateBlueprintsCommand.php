@@ -449,6 +449,8 @@ SIGNATURE;
                 ? $this->normalizeArchitecture($architectureOverride, $defaultArchitecture)
                 : ($lastArchitecture ?? $defaultArchitecture);
 
+            $authContexts = $this->collectAuthContextDefinitions($queue);
+
             $authOptions = [
                 'architecture' => $scaffoldingArchitecture,
                 'controllers_path' => $apiControllersPath,
@@ -465,6 +467,10 @@ SIGNATURE;
 
             if ($authModelData !== null) {
                 $authOptions['model'] = $authModelData;
+            }
+
+            if ($authContexts !== []) {
+                $authOptions['contexts'] = $authContexts;
             }
 
             $this->authScaffolding->ensure($authOptions);
@@ -1368,6 +1374,101 @@ SIGNATURE;
 
             if ($this->matchesAuthModelBlueprint($entry['blueprint'], $authModelEntity)) {
                 return $entry['blueprint'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $queue
+     * @return array<string, array<string, mixed>>
+     */
+    private function collectAuthContextDefinitions(array $queue): array
+    {
+        $contexts = [];
+
+        foreach ($queue as $entry) {
+            $blueprint = $entry['blueprint'] ?? null;
+
+            if (! $blueprint instanceof Blueprint) {
+                continue;
+            }
+
+            if (! $this->isAuthBlueprint($blueprint)) {
+                continue;
+            }
+
+            $key = $this->deriveAuthContextKey($blueprint);
+
+            if ($key === null || isset($contexts[$key])) {
+                continue;
+            }
+
+            $contexts[$key] = [
+                'key' => $key,
+                'model' => $blueprint->toArray(),
+            ];
+        }
+
+        ksort($contexts);
+
+        return $contexts;
+    }
+
+    private function isAuthBlueprint(Blueprint $blueprint): bool
+    {
+        $metadata = $blueprint->metadata();
+
+        if (isset($metadata['tags']) && is_array($metadata['tags'])) {
+            foreach ($metadata['tags'] as $tag) {
+                if (! is_string($tag)) {
+                    continue;
+                }
+
+                $lowered = strtolower($tag);
+
+                if ($lowered === 'auth' || $lowered === 'authentication') {
+                    return true;
+                }
+            }
+        }
+
+        $module = strtolower((string) $blueprint->module());
+
+        if ($module !== '' && str_contains($module, 'auth')) {
+            return true;
+        }
+
+        foreach ($blueprint->fields() as $field) {
+            if ($field instanceof Field && strtolower($field->name) === 'password') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function deriveAuthContextKey(Blueprint $blueprint): ?string
+    {
+        $tenancy = $blueprint->tenancy();
+        $mode = isset($tenancy['mode']) && is_string($tenancy['mode'])
+            ? strtolower(trim($tenancy['mode']))
+            : '';
+
+        if ($mode === 'central' || $mode === 'tenant') {
+            return $mode;
+        }
+
+        $module = strtolower((string) $blueprint->module());
+
+        if ($module !== '') {
+            if (str_contains($module, 'tenant')) {
+                return 'tenant';
+            }
+
+            if (str_contains($module, 'central')) {
+                return 'central';
             }
         }
 
