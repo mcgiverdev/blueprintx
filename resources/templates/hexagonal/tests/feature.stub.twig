@@ -1,3 +1,32 @@
+{% set api_middleware = blueprint.api.middleware|default([]) %}
+{% if api_middleware is not iterable %}
+{% set api_middleware = [] %}
+{% endif %}
+{% set requires_tenant_alias = false %}
+{% set requires_tenancy_alias = false %}
+{% set requires_ability_alias = false %}
+{% set requires_abilities_alias = false %}
+{% for middleware in api_middleware %}
+{% set middleware_parts = middleware|split(':', 2) %}
+{% set middleware_alias = middleware_parts[0]|default(middleware) %}
+{% if middleware_alias == 'tenant' %}
+{% set requires_tenant_alias = true %}
+{% elseif middleware_alias == 'tenancy' %}
+{% set requires_tenancy_alias = true %}
+{% elseif middleware_alias == 'ability' %}
+{% set requires_ability_alias = true %}
+{% elseif middleware_alias == 'abilities' %}
+{% set requires_abilities_alias = true %}
+{% endif %}
+{% endfor %}
+{% set requires_router_alias = requires_tenant_alias or requires_tenancy_alias or requires_ability_alias or requires_abilities_alias %}
+{% set requires_tenant_routes = requires_tenant_alias or requires_tenancy_alias %}
+{% set tenant_schema = tests.tenant_schema|default({'required': false}) %}
+{% set tenant_schema_dependencies = tests.tenant_schema_dependencies|default([]) %}
+{% if tenant_schema_dependencies is not iterable %}
+{% set tenant_schema_dependencies = [] %}
+{% endif %}
+{% set requires_tenant_migrations = tenant_schema.required|default(false) %}
 <?php
 
 namespace {{ namespaces.tests|default('Tests\Feature') }};
@@ -9,12 +38,23 @@ use {{ entity.class|default('App\\Domain\\Sample\\Models\\Sample') }};
 {% endfor %}
 {% if tests.password_fields|length > 0 %}use Illuminate\Support\Facades\Hash;
 {% endif %}
+{% if requires_tenant_migrations %}use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+{% endif %}
+{% if requires_tenant_routes %}use Illuminate\Support\Facades\Route;
+{% endif %}
 
 class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {
-    use RefreshDatabase;
+        use RefreshDatabase;
 
-    protected function setUp(): void
+{% if requires_tenant_routes %}        /**
+         * @var array<int, bool>
+         */
+        private static array $registeredTenantRoutes = [];
+
+{% endif %}
+        protected function setUp(): void
     {
         parent::setUp();
 
@@ -22,6 +62,23 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
             \Illuminate\Auth\Middleware\Authenticate::class,
             'role',
         ]);
+{% if requires_router_alias %}
+                $router = $this->app->make(\Illuminate\Routing\Router::class);
+
+{% if requires_tenant_alias %}                $router->aliasMiddleware('tenant', \Illuminate\Routing\Middleware\SubstituteBindings::class);
+
+{% endif %}{% if requires_tenancy_alias %}                $router->aliasMiddleware('tenancy', \Illuminate\Routing\Middleware\SubstituteBindings::class);
+
+{% endif %}{% if requires_ability_alias %}                $router->aliasMiddleware('ability', \Illuminate\Routing\Middleware\SubstituteBindings::class);
+
+{% endif %}{% if requires_abilities_alias %}                $router->aliasMiddleware('abilities', \Illuminate\Routing\Middleware\SubstituteBindings::class);
+
+{% endif %}{% if requires_tenant_routes %}
+
+                $this->registerTenantRoutes();
+{% endif %}{% endif %}{% if requires_tenant_migrations %}        $this->bootstrapTenantSchema();
+
+{% endif %}
     }
 
     public function test_index_returns_paginated_list(): void
@@ -43,7 +100,7 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
                 'meta' => ['current_page', 'from', 'last_page', 'per_page', 'to', 'total'],
             ]);
 
-        $this->assertSame({{ tests.index_count }}, $response->json('meta.total'));
+        $this->assertSame({{ entity.class|class_basename }}::query()->count(), $response->json('meta.total'));
 {% for include in tests.includes %}
         $this->assertNotNull($response->json('{{ include.index_path }}'));
 {% if include.relation %}
@@ -182,4 +239,67 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
             'id' => ${{ naming.entity_variable }}->id,
         ]);
     }
+{% if requires_tenant_routes %}
+
+        private function registerTenantRoutes(): void
+        {
+                $appId = spl_object_id($this->app);
+
+                if (isset(self::$registeredTenantRoutes[$appId])) {
+                        return;
+                }
+
+                if (! file_exists(base_path('routes/tenant.php'))) {
+                        return;
+                }
+
+                Route::middleware('api')
+                        ->prefix('api')
+                        ->group(base_path('routes/tenant.php'));
+
+                self::$registeredTenantRoutes[$appId] = true;
+        }
+{% endif %}{% if requires_tenant_migrations %}
+
+        private function bootstrapTenantSchema(): void
+        {
+                if (! Schema::hasTable('{{ tenant_schema.table }}')) {
+                        Schema::create('{{ tenant_schema.table }}', function (Blueprint $table): void {
+                                {{ tenant_schema.primary.definition }}
+{% for column in tenant_schema.columns %}                {{ column.definition }}
+{% endfor %}{% if tenant_schema.timestamps %}                $table->timestamps();
+{% endif %}{% if tenant_schema.soft_deletes %}                $table->softDeletes();
+{% endif %}            });
+                }
+
+                Schema::table('{{ tenant_schema.table }}', function (Blueprint $table): void {
+{% for column in tenant_schema.columns %}            if (! Schema::hasColumn('{{ tenant_schema.table }}', '{{ column.name }}')) {
+                                {{ column.definition }}
+                        }
+{% endfor %}{% if tenant_schema.soft_deletes %}            if (! Schema::hasColumn('{{ tenant_schema.table }}', 'deleted_at')) {
+                                $table->softDeletes();
+                        }
+{% endif %}        });
+{% for dependency in tenant_schema_dependencies %}
+
+                if (! Schema::hasTable('{{ dependency.table }}')) {
+                        Schema::create('{{ dependency.table }}', function (Blueprint $table): void {
+                                {{ dependency.primary.definition }}
+{% for column in dependency.columns %}                {{ column.definition }}
+{% endfor %}{% if dependency.timestamps %}                $table->timestamps();
+{% endif %}{% if dependency.soft_deletes %}                $table->softDeletes();
+{% endif %}            });
+                }
+
+                Schema::table('{{ dependency.table }}', function (Blueprint $table): void {
+{% for column in dependency.columns %}            if (! Schema::hasColumn('{{ dependency.table }}', '{{ column.name }}')) {
+                                {{ column.definition }}
+                        }
+{% endfor %}{% if dependency.soft_deletes %}            if (! Schema::hasColumn('{{ dependency.table }}', 'deleted_at')) {
+                                $table->softDeletes();
+                        }
+{% endif %}        });
+{% endfor %}
+        }
+{% endif %}
 }

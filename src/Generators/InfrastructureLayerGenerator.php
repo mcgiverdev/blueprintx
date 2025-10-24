@@ -60,6 +60,10 @@ class InfrastructureLayerGenerator implements LayerGenerator
             if ($tenantProviderFile = $this->makeTenancyServiceProviderFile($context, $options)) {
                 $result->addFile($tenantProviderFile);
             }
+
+            if ($providersBootstrapFile = $this->ensureTenancyServiceProviderRegistered($options)) {
+                $result->addFile($providersBootstrapFile);
+            }
         }
 
         return $result;
@@ -413,13 +417,60 @@ class InfrastructureLayerGenerator implements LayerGenerator
             return new GeneratedFile($providerPath, $rendered, false);
         }
 
-    $updated = $this->applyServiceProviderData($existingContents, $viewData, $parsed['uses']);
+        $updated = $this->applyServiceProviderData($existingContents, $viewData, $parsed['uses']);
 
         if (trim($existingContents) === trim($updated)) {
             return null;
         }
 
         return new GeneratedFile($providerPath, $updated, true);
+    }
+
+    private function ensureTenancyServiceProviderRegistered(array $options): ?GeneratedFile
+    {
+        $providersListPath = $options['paths']['providers_list'] ?? 'bootstrap/providers.php';
+        $absolutePath = $this->resolveAbsolutePath($providersListPath);
+
+        if (! is_string($absolutePath) || ! is_file($absolutePath)) {
+            return null;
+        }
+
+        $contents = file_get_contents($absolutePath) ?: '';
+
+        if ($contents === '') {
+            return null;
+        }
+
+        $tenancyProviderEntry = 'App\\Providers\\TenancyServiceProvider::class';
+
+        if (str_contains($contents, $tenancyProviderEntry)) {
+            return null;
+        }
+
+        $lineEnding = str_contains($contents, "\r\n") ? "\r\n" : "\n";
+
+        $indentation = '    ';
+
+        if (preg_match('/' . preg_quote($lineEnding, '/') . '([ \t]*)App\\\\Providers\\\\[A-Za-z0-9_\\\\]+::class,/', $contents, $matches) === 1) {
+            $indentation = $matches[1];
+        }
+
+        $pattern = '/' . preg_quote($lineEnding, '/') . '\\];\\s*$/';
+
+        if (preg_match($pattern, $contents) !== 1) {
+            return null;
+        }
+
+        $replacement = $lineEnding . $indentation . $tenancyProviderEntry . ',' . $lineEnding . '];' . $lineEnding;
+        $updated = preg_replace($pattern, $replacement, $contents, 1);
+
+        if ($updated === null || $updated === $contents) {
+            return null;
+        }
+
+        $normalizedPath = str_replace('\\', '/', $providersListPath);
+
+        return new GeneratedFile($normalizedPath, $updated, true);
     }
 
     private function makeTenancyServiceProviderFile(array $context, array $options): ?GeneratedFile

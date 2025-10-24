@@ -18,6 +18,8 @@ class TestsLayerGenerator implements LayerGenerator
 {
     use ResolvesModelNamespaces;
 
+    private static array $tenantSchemaCache = [];
+
     private array $resourceConfig;
 
     private array $optimisticLocking;
@@ -65,8 +67,20 @@ class TestsLayerGenerator implements LayerGenerator
      */
     private function buildContext(Blueprint $blueprint, ArchitectureDriver $driver, array $options): array
     {
-    $relations = $this->prepareRelations($blueprint);
+        $relations = $this->prepareRelations($blueprint);
+        $relationMap = [];
+
+        foreach ($relations as $relation) {
+            $field = $relation['field'] ?? null;
+
+            if (is_string($field) && $field !== '') {
+                $relationMap[$field] = $relation;
+            }
+        }
+
         $payloads = $this->prepareFieldPayloads($blueprint, $relations);
+        $payloads['tenant_schema'] = $this->buildTenantSchemaDefinition($blueprint, $relationMap);
+    $payloads['tenant_schema_dependencies'] = $this->resolveTenantSchemaDependencies($blueprint, $relations, $relationMap);
 
         $naming = $this->namingContext($blueprint);
         $optimisticLocking = $this->buildOptimisticLockingContext($blueprint);
@@ -571,6 +585,402 @@ class TestsLayerGenerator implements LayerGenerator
             'uses_soft_deletes' => (bool) ($blueprint->options()['softDeletes'] ?? false),
             'password_fields' => $passwordFields,
         ];
+    }
+
+    private function buildTenantSchemaDefinition(Blueprint $blueprint, array $relationsByField): array
+    {
+        $tenancy = $blueprint->tenancy();
+        $mode = $this->normalizeTenancyValue($tenancy['mode'] ?? null);
+        $storage = $this->normalizeTenancyValue($tenancy['storage'] ?? null);
+
+        if ($mode !== 'tenant' && $storage !== 'tenant') {
+            return [
+                'required' => false,
+            ];
+        }
+
+        $columns = [];
+        $primary = null;
+
+        foreach ($blueprint->fields() as $field) {
+            $relation = $relationsByField[$field->name] ?? null;
+            $definition = $this->tenantColumnDefinition($field, $relation);
+
+            if ($definition === null) {
+                continue;
+            }
+
+            if (($definition['is_primary'] ?? false) === true) {
+                $primary = $definition;
+            } else {
+                $columns[] = $definition;
+            }
+        }
+
+        $options = $blueprint->options();
+        $timestamps = array_key_exists('timestamps', $options) ? (bool) $options['timestamps'] : true;
+        $softDeletes = (bool) ($options['softDeletes'] ?? false);
+
+        $definition = [
+            'required' => true,
+            'table' => $blueprint->table(),
+            'primary' => $primary ?? [
+                'name' => 'id',
+                'definition' => '$table->id();',
+                'is_primary' => true,
+            ],
+            'columns' => $columns,
+            'timestamps' => $timestamps,
+            'soft_deletes' => $softDeletes,
+        ];
+
+        self::$tenantSchemaCache[$definition['table']] = $definition;
+
+        return $definition;
+    }
+
+    private function resolveTenantSchemaDependencies(Blueprint $blueprint, array $relations, array $relationMap): array
+    {
+        if (self::$tenantSchemaCache === []) {
+            return [];
+        }
+
+        $dependencies = [];
+
+        foreach (self::$tenantSchemaCache as $table => $definition) {
+            if ($table === $blueprint->table()) {
+                continue;
+            }
+
+            if (! ($definition['required'] ?? false)) {
+                continue;
+            }
+
+            if (! $this->blueprintRequiresTenantTable($blueprint, $relations, $relationMap, $table)) {
+                continue;
+            }
+
+            $dependencies[] = $definition;
+        }
+
+        return $dependencies;
+    }
+
+    private function blueprintRequiresTenantTable(
+        Blueprint $blueprint,
+        array $relations,
+        array $relationMap,
+        string $table
+    ): bool {
+        $normalizedTable = $this->normalizeReferencedTable($table);
+
+        foreach ($blueprint->fields() as $field) {
+            if ($this->fieldRulesReferenceTable($field, $normalizedTable)) {
+                return true;
+            }
+
+            $relation = $relationMap[$field->name] ?? null;
+
+            if ($relation !== null && $this->relationTargetsTable($relation, $normalizedTable)) {
+                return true;
+            }
+        }
+
+        foreach ($relations as $relation) {
+            if ($this->relationTargetsTable($relation, $normalizedTable)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function fieldRulesReferenceTable(Field $field, string $table): bool
+    {
+        $rules = $field->rules ?? null;
+
+        if (! is_string($rules) || trim($rules) === '') {
+            return false;
+        }
+
+        foreach ($this->extractExistsRuleTables($rules) as $referencedTable) {
+            if ($referencedTable === $table) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function extractExistsRuleTables(string $rules): array
+    {
+        $tables = [];
+        $segments = array_filter(array_map('trim', explode('|', $rules)), static fn ($segment) => $segment !== '');
+
+        foreach ($segments as $segment) {
+            if (! Str::startsWith(strtolower($segment), 'exists:')) {
+                continue;
+            }
+
+            $arguments = substr($segment, strlen('exists:'));
+            $parts = array_map('trim', explode(',', $arguments));
+            $parameter = $parts[0] ?? '';
+
+            if ($parameter === '') {
+                continue;
+            }
+
+            $tables[] = $this->normalizeReferencedTable($parameter);
+        }
+
+        return $tables;
+    }
+
+    private function relationTargetsTable(array $relation, string $table): bool
+    {
+        $target = strtolower((string) ($relation['name'] ?? ''));
+        $variable = strtolower((string) ($relation['variable'] ?? ''));
+        $method = strtolower((string) ($relation['method'] ?? ''));
+
+        $candidates = array_filter([$target, $variable, $method], static fn ($value) => is_string($value) && $value !== '');
+
+        $relationName = $this->tableToRelationName($table);
+
+        foreach ($candidates as $candidate) {
+            if ($candidate === $relationName) {
+                return true;
+            }
+        }
+
+        $class = $relation['class'] ?? null;
+
+        if (is_string($class) && $class !== '') {
+            $className = strtolower(class_basename($class));
+
+            if ($className === $this->tableToClassName($table)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizeReferencedTable(string $table): string
+    {
+        $table = strtolower(trim($table));
+
+        if ($table === '') {
+            return '';
+        }
+
+        $segments = explode('.', $table);
+
+        return end($segments) ?: $table;
+    }
+
+    private function tableToRelationName(string $table): string
+    {
+        return strtolower(Str::singular(str_replace('-', '_', $table)));
+    }
+
+    private function tableToClassName(string $table): string
+    {
+        return strtolower(Str::studly(Str::singular(str_replace(['-', '_'], ' ', $table))));
+    }
+
+    private function normalizeTenancyValue(mixed $value): string
+    {
+        return is_string($value) ? strtolower(trim($value)) : '';
+    }
+
+    private function tenantColumnDefinition(Field $field, ?array $relation): ?array
+    {
+        $name = $field->name;
+
+        if (! is_string($name) || $name === '') {
+            return null;
+        }
+
+        if ($name === 'id') {
+            return [
+                'name' => $name,
+                'definition' => $this->compileTenantColumn($field, $relation, true),
+                'is_primary' => true,
+            ];
+        }
+
+        if (in_array($name, ['created_at', 'updated_at', 'deleted_at'], true)) {
+            return null;
+        }
+
+        return [
+            'name' => $name,
+            'definition' => $this->compileTenantColumn($field, $relation, false),
+        ];
+    }
+
+    private function compileTenantColumn(Field $field, ?array $relation, bool $primary): string
+    {
+        $method = $this->resolveTenantColumnMethod($field, $relation, $primary);
+        $parameters = $this->resolveTenantColumnParameters($field, $method);
+        $modifiers = $this->resolveTenantColumnModifiers($field, $method, $primary);
+
+        return sprintf('$table->%s(\'%s\'%s)%s;', $method, $field->name, $parameters, $modifiers);
+    }
+
+    private function resolveTenantColumnMethod(Field $field, ?array $relation, bool $primary): string
+    {
+        $type = strtolower((string) $field->type);
+
+        if ($primary) {
+            return match ($type) {
+                'uuid' => 'uuid',
+                'ulid' => 'ulid',
+                default => 'id',
+            };
+        }
+
+        if ($relation !== null) {
+            return match ($type) {
+                'uuid', 'ulid' => $type,
+                'integer', 'int', 'biginteger', 'bigint', 'unsignedbigint' => 'unsignedBigInteger',
+                default => 'uuid',
+            };
+        }
+
+        return match ($type) {
+            'uuid' => 'uuid',
+            'ulid' => 'ulid',
+            'string' => 'string',
+            'text' => 'text',
+            'boolean' => 'boolean',
+            'date' => 'date',
+            'datetime', 'datetimetz', 'timestamp' => 'dateTime',
+            'integer', 'int' => 'integer',
+            'bigint', 'biginteger' => 'bigInteger',
+            'smallint', 'smallinteger' => 'smallInteger',
+            'tinyint', 'tinyinteger' => 'tinyInteger',
+            'json' => 'json',
+            'decimal' => 'decimal',
+            'float' => 'float',
+            'double' => 'double',
+            default => 'string',
+        };
+    }
+
+    private function resolveTenantColumnParameters(Field $field, string $method): string
+    {
+        $parameters = [];
+
+        if ($method === 'decimal') {
+            $parameters[] = (string) ($field->precision ?? 12);
+            $parameters[] = (string) ($field->scale ?? 2);
+        } elseif ($method === 'string') {
+            $length = $this->extractNumericRuleValue($field->rules ?? null, ['max', 'size']);
+
+            if ($length !== null && $length > 0) {
+                $parameters[] = (string) $length;
+            }
+        }
+
+        if ($parameters === []) {
+            return '';
+        }
+
+        return ', ' . implode(', ', $parameters);
+    }
+
+    private function resolveTenantColumnModifiers(Field $field, string $method, bool $primary): string
+    {
+        $parts = [];
+
+        if ($primary && $method !== 'id') {
+            $parts[] = '->primary()';
+        }
+
+        if (! $primary && $this->fieldIsNullable($field)) {
+            $parts[] = '->nullable()';
+        }
+
+        if ($field->default !== null) {
+            $parts[] = '->default(' . $this->exportDefaultValue($field->default) . ')';
+        }
+
+        return implode('', $parts);
+    }
+
+    private function extractNumericRuleValue(?string $rules, array $keys): ?int
+    {
+        if (! is_string($rules) || trim($rules) === '') {
+            return null;
+        }
+
+        $segments = array_filter(array_map('trim', explode('|', $rules)), static fn (string $part): bool => $part !== '');
+
+        foreach ($segments as $segment) {
+            $lower = strtolower($segment);
+
+            foreach ($keys as $key) {
+                $normalized = strtolower($key) . ':';
+
+                if (Str::startsWith($lower, $normalized)) {
+                    $value = substr($segment, strlen($key) + 1);
+                    $parts = explode(',', $value);
+                    $number = trim($parts[0] ?? '');
+
+                    if ($number !== '' && is_numeric($number)) {
+                        return (int) $number;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function fieldIsNullable(Field $field): bool
+    {
+        if ($field->nullable !== null) {
+            return (bool) $field->nullable;
+        }
+
+        if (! is_string($field->rules) || trim($field->rules) === '') {
+            return false;
+        }
+
+        $segments = array_filter(array_map('trim', explode('|', $field->rules)), static fn (string $part): bool => $part !== '');
+
+        foreach ($segments as $segment) {
+            if (Str::startsWith(strtolower($segment), 'nullable')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function exportDefaultValue(mixed $value): string
+    {
+        if (is_string($value)) {
+            return '\'' . addslashes($value) . '\'';
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if (is_numeric($value)) {
+            return (string) $value;
+        }
+
+        if ($value === null) {
+            return 'null';
+        }
+
+        return 'null';
     }
 
     private function isPasswordField(string $fieldName): bool
