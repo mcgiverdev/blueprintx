@@ -51,6 +51,14 @@ class InfrastructureLayerGenerator implements LayerGenerator
             $result->addFile($serviceProviderFile);
         }
 
+        $tenancyMode = $this->determineTenancyMode($context['blueprint'] ?? []);
+
+        if ($tenancyMode === 'tenant') {
+            if ($tenantProviderFile = $this->makeTenancyServiceProviderFile($context, $options)) {
+                $result->addFile($tenantProviderFile);
+            }
+        }
+
         return $result;
     }
 
@@ -348,6 +356,10 @@ class InfrastructureLayerGenerator implements LayerGenerator
      */
     private function makeAppServiceProviderFile(array $context, array $options): ?GeneratedFile
     {
+        if ($this->determineTenancyMode($context['blueprint'] ?? []) !== 'central') {
+            return null;
+        }
+
         $interfaceFqcn = $this->normalizeClassName(sprintf('%s\\%sRepositoryInterface', $context['domain']['repositories'], $context['naming']['entity_studly']));
         $implementationFqcn = $this->normalizeClassName(sprintf('%s\\Eloquent%sRepository', $context['namespaces']['repositories'], $context['naming']['entity_studly']));
 
@@ -362,18 +374,64 @@ class InfrastructureLayerGenerator implements LayerGenerator
 
         $parsed = $this->parseServiceProvider($existingContents ?? '');
         $bindings = $parsed['bindings'];
+        $bindings[$interfaceFqcn] = $implementationFqcn;
 
-    $bindings[$interfaceFqcn] = $implementationFqcn;
+        $namespace = $this->detectProviderNamespace($existingContents) ?? 'App\\Providers';
+        $driverName = $context['driver']['name'] ?? 'hexagonal';
+        $template = sprintf('@%s/infrastructure/app-service-provider.stub.twig', $driverName);
 
-    $rendered = $this->renderServiceProvider($bindings, $parsed['uses']);
+        if (! $this->templates->exists($template)) {
+            $template = '@hexagonal/infrastructure/app-service-provider.stub.twig';
 
-        if ($existingContents !== null && trim($existingContents) === trim($rendered)) {
+            if (! $this->templates->exists($template)) {
+                return null;
+            }
+        }
+
+        $viewData = $this->prepareServiceProviderData($namespace, $bindings, $parsed['uses']);
+
+        if ($existingContents === null) {
+            $rendered = $this->templates->render($template, $viewData);
+
+            return new GeneratedFile($providerPath, $rendered, false);
+        }
+
+    $updated = $this->applyServiceProviderData($existingContents, $viewData, $parsed['uses']);
+
+        if (trim($existingContents) === trim($updated)) {
             return null;
         }
 
-        $overwrite = $existingContents !== null;
+        return new GeneratedFile($providerPath, $updated, true);
+    }
 
-        return new GeneratedFile($providerPath, $rendered, $overwrite);
+    private function makeTenancyServiceProviderFile(array $context, array $options): ?GeneratedFile
+    {
+        $interfaceFqcn = $this->normalizeClassName(sprintf('%s\\%sRepositoryInterface', $context['domain']['repositories'], $context['naming']['entity_studly']));
+        $implementationFqcn = $this->normalizeClassName(sprintf('%s\\Eloquent%sRepository', $context['namespaces']['repositories'], $context['naming']['entity_studly']));
+
+        $providerPath = rtrim($options['paths']['providers'] ?? 'app/Providers', '/') . '/TenancyServiceProvider.php';
+        $absolutePath = $this->resolveAbsolutePath($providerPath);
+
+        if (! is_string($absolutePath) || ! is_file($absolutePath)) {
+            return null;
+        }
+
+        $existingContents = file_get_contents($absolutePath) ?: '';
+
+        $parsed = $this->parseServiceProvider($existingContents);
+        $bindings = $parsed['bindings'];
+        $bindings[$interfaceFqcn] = $implementationFqcn;
+
+        $namespace = $this->detectProviderNamespace($existingContents) ?? 'App\\Providers';
+        $viewData = $this->prepareServiceProviderData($namespace, $bindings, $parsed['uses']);
+        $updated = $this->applyServiceProviderData($existingContents, $viewData, $parsed['uses']);
+
+        if (trim($existingContents) === trim($updated)) {
+            return null;
+        }
+
+        return new GeneratedFile($providerPath, $updated, true);
     }
 
     /**
@@ -424,14 +482,14 @@ class InfrastructureLayerGenerator implements LayerGenerator
             }
         }
 
-    return ['bindings' => $bindings, 'uses' => $uses];
+        return ['bindings' => $bindings, 'uses' => $uses];
     }
 
     /**
      * @param array<string, string> $bindings
      * @param array<int, array{fqcn: string, alias: ?string}> $existingUses
      */
-    private function renderServiceProvider(array $bindings, array $existingUses = []): string
+    private function prepareServiceProviderData(string $namespace, array $bindings, array $existingUses = []): array
     {
         $normalizedBindings = [];
 
@@ -453,11 +511,10 @@ class InfrastructureLayerGenerator implements LayerGenerator
         $imports = $this->collectServiceProviderImports($entries, $existingUses);
         $aliases = $this->buildImportAliases($imports);
 
-        $useLines = [];
-
         $sortedImports = array_values($imports);
-        usort($sortedImports, static fn (array $a, array $b): int => strcmp($a['alias'] ?? $a['fqcn'], $b['alias'] ?? $b['fqcn']));
+        usort($sortedImports, static fn (array $a, array $b): int => strcmp($a['fqcn'], $b['fqcn']));
 
+        $useStatements = [];
         $seen = [];
 
         foreach ($sortedImports as $import) {
@@ -469,178 +526,365 @@ class InfrastructureLayerGenerator implements LayerGenerator
 
             $seen[$fqcn] = true;
 
-            $alias = $aliases[$fqcn];
+            $alias = $aliases[$fqcn] ?? $this->classBasename($fqcn);
             $base = $this->classBasename($fqcn);
 
-            if ($alias !== null && $alias !== '' && $alias !== $base) {
-                $useLines[] = sprintf('use %s as %s;', $fqcn, $alias);
-            } else {
-                $useLines[] = sprintf('use %s;', $fqcn);
-            }
+            $useStatements[] = [
+                'fqcn' => $fqcn,
+                'alias' => $alias !== $base ? $alias : null,
+            ];
         }
 
-        $useBlock = implode("\n", $useLines);
+        $bindingLines = array_map(function (array $entry) use ($aliases): array {
+            $interfaceFqcn = $this->normalizeClassName($entry['interface']);
+            $implementationFqcn = $this->normalizeClassName($entry['implementation']);
 
-        $bindingLines = array_map(function (array $entry) use ($aliases): string {
-            $interfaceAlias = $aliases[$this->normalizeClassName($entry['interface'])];
-            $implementationAlias = $aliases[$this->normalizeClassName($entry['implementation'])];
-
-            return sprintf(
-                '        $this->app->bind(%s::class, %s::class);',
-                $interfaceAlias,
-                $implementationAlias
-            );
+            return [
+                'interface_alias' => $aliases[$interfaceFqcn] ?? $this->classBasename($interfaceFqcn),
+                'implementation_alias' => $aliases[$implementationFqcn] ?? $this->classBasename($implementationFqcn),
+            ];
         }, $entries);
 
-        $registerBody = $bindingLines === []
-            ? "        //\n"
-            : implode("\n", $bindingLines) . "\n";
+        return [
+            'namespace' => $namespace,
+            'imports' => $useStatements,
+            'bindings' => $bindingLines,
+        ];
+    }
 
-        return <<<PHP
-<?php
-
-namespace App\Providers;
-
-{$useBlock}
-
-class AppServiceProvider extends ServiceProvider
-{
     /**
-     * Register any application services.
+     * @param array<int, array{fqcn: string, alias: ?string}> $existingUses
      */
-    public function register(): void
+    private function applyServiceProviderData(string $contents, array $viewData, array $existingUses = []): string
     {
-{$registerBody}    }
-        private function collectServiceProviderImports(array $entries, array $existingUses): array
-        {
-            $imports = [];
+        $lineEnding = $this->detectLineEnding($contents);
+        $updated = $contents;
 
-            $imports['Illuminate\\Support\\ServiceProvider'] = [
-                'fqcn' => 'Illuminate\\Support\\ServiceProvider',
-                'alias' => 'ServiceProvider',
+        $existingUseMap = [];
+
+        foreach ($existingUses as $use) {
+            $existingUseMap[$this->normalizeClassName($use['fqcn'])] = $use['alias'] ?? null;
+        }
+
+        foreach ($viewData['imports'] as $import) {
+            $statement = sprintf(
+                'use %s%s;',
+                $import['fqcn'],
+                isset($import['alias']) && $import['alias'] !== null
+                    ? ' as ' . $import['alias']
+                    : ''
+            );
+
+            $normalizedFqcn = $this->normalizeClassName($import['fqcn']);
+
+            if (isset($existingUseMap[$normalizedFqcn])) {
+                continue;
+            }
+
+            $updated = $this->ensureUseStatement($updated, $statement, $lineEnding);
+        }
+
+        $bindingLines = array_map(static function (array $binding): string {
+            return sprintf(
+                '        $this->app->bind(%s::class, %s::class);',
+                $binding['interface_alias'],
+                $binding['implementation_alias']
+            );
+        }, $viewData['bindings']);
+
+        return $this->ensureRegisterBindings($updated, $bindingLines, $lineEnding);
+    }
+
+    private function detectLineEnding(string $contents): string
+    {
+        return str_contains($contents, "\r\n") ? "\r\n" : "\n";
+    }
+
+    private function ensureUseStatement(string $contents, string $statement, string $lineEnding): string
+    {
+        if (str_contains($contents, $statement)) {
+            return $contents;
+        }
+
+        return $this->insertUseStatement($contents, $statement, $lineEnding);
+    }
+
+    private function insertUseStatement(string $contents, string $statement, string $lineEnding): string
+    {
+        if (preg_match_all('/^use\s+[^;]+;/m', $contents, $matches, PREG_OFFSET_CAPTURE) && $matches[0] !== []) {
+            $last = $matches[0][array_key_last($matches[0])];
+            $insertPos = $last[1] + strlen($last[0]);
+
+            return substr($contents, 0, $insertPos) . $lineEnding . $statement . substr($contents, $insertPos);
+        }
+
+        if (preg_match('/^namespace\s+[^;]+;/m', $contents, $match, PREG_OFFSET_CAPTURE) === 1) {
+            $namespaceEnd = $match[0][1] + strlen($match[0][0]);
+            $before = substr($contents, 0, $namespaceEnd);
+            $after = substr($contents, $namespaceEnd);
+
+            $before = rtrim($before, "\r\n") . $lineEnding . $lineEnding;
+            $after = ltrim($after, "\r\n");
+
+            return $before . $statement . $lineEnding . $after;
+        }
+
+        if (str_starts_with($contents, '<?php')) {
+            $openingTagEnd = strpos($contents, $lineEnding);
+
+            if ($openingTagEnd === false) {
+                return $contents . $lineEnding . $statement . $lineEnding;
+            }
+
+            $insertPos = $openingTagEnd + strlen($lineEnding);
+
+            return substr($contents, 0, $insertPos) . $statement . $lineEnding . substr($contents, $insertPos);
+        }
+
+        return $statement . $lineEnding . $contents;
+    }
+
+    private function ensureRegisterBindings(string $contents, array $bindingLines, string $lineEnding): string
+    {
+        if ($bindingLines === []) {
+            return $contents;
+        }
+
+        $functionPos = strpos($contents, 'function register');
+
+        if ($functionPos === false) {
+            return $contents;
+        }
+
+        $bracePos = strpos($contents, '{', $functionPos);
+
+        if ($bracePos === false) {
+            return $contents;
+        }
+
+        $bodyStart = $bracePos + 1;
+        $length = strlen($contents);
+        $depth = 1;
+
+        for ($index = $bodyStart; $index < $length; $index++) {
+            $character = $contents[$index];
+
+            if ($character === '{') {
+                ++$depth;
+                continue;
+            }
+
+            if ($character !== '}') {
+                continue;
+            }
+
+            --$depth;
+
+            if ($depth === 0) {
+                $bodyEnd = $index;
+                break;
+            }
+        }
+
+        if (! isset($bodyEnd)) {
+            return $contents;
+        }
+
+        $body = substr($contents, $bodyStart, $bodyEnd - $bodyStart);
+        $missing = [];
+
+        foreach ($bindingLines as $line) {
+            if (! str_contains($body, $line)) {
+                $missing[] = $line;
+            }
+        }
+
+        if ($missing === []) {
+            return $contents;
+        }
+
+        $insertion = '';
+        $trimmedBody = rtrim($body);
+
+        if ($trimmedBody === '') {
+            $insertion .= $lineEnding;
+        } elseif (! str_ends_with($body, $lineEnding)) {
+            $insertion .= $lineEnding;
+        }
+
+        $insertion .= implode($lineEnding, $missing) . $lineEnding;
+
+        $updatedBody = $body . $insertion;
+
+        return substr_replace($contents, $updatedBody, $bodyStart, $bodyEnd - $bodyStart);
+    }
+
+    /**
+     * @param array<int, array{interface: string, implementation: string}> $entries
+     * @param array<int, array{fqcn: string, alias: ?string}> $existingUses
+     * @return array<string, array{fqcn: string, alias: ?string}>
+     */
+    private function collectServiceProviderImports(array $entries, array $existingUses): array
+    {
+        $imports = [];
+
+        $imports['Illuminate\\Support\\ServiceProvider'] = [
+            'fqcn' => 'Illuminate\\Support\\ServiceProvider',
+            'alias' => 'ServiceProvider',
+        ];
+
+        foreach ($existingUses as $use) {
+            $fqcn = $this->normalizeClassName($use['fqcn']);
+            $imports[$fqcn] = [
+                'fqcn' => $fqcn,
+                'alias' => $use['alias'],
             ];
+        }
 
-            foreach ($existingUses as $use) {
-                $fqcn = $this->normalizeClassName($use['fqcn']);
-                $imports[$fqcn] = [
-                    'fqcn' => $fqcn,
-                    'alias' => $use['alias'],
-                ];
-            }
+        foreach ($entries as $entry) {
+            foreach (['interface', 'implementation'] as $key) {
+                $fqcn = $this->normalizeClassName($entry[$key]);
 
-            foreach ($entries as $entry) {
-                foreach (['interface', 'implementation'] as $key) {
-                    $fqcn = $this->normalizeClassName($entry[$key]);
-
-                    if (! isset($imports[$fqcn])) {
-                        $imports[$fqcn] = [
-                            'fqcn' => $fqcn,
-                            'alias' => null,
-                        ];
-                    }
+                if (! isset($imports[$fqcn])) {
+                    $imports[$fqcn] = [
+                        'fqcn' => $fqcn,
+                        'alias' => null,
+                    ];
                 }
             }
-
-            return $imports;
         }
 
-        /**
-         * @param array<string, array{fqcn: string, alias: ?string}> $imports
-         * @return array<string, string>
-         */
-        private function buildImportAliases(array $imports): array
-        {
-            $aliases = [];
-            $used = [];
-            $groups = [];
+        return $imports;
+    }
 
-            foreach ($imports as $fqcn => $import) {
-                $fqcn = $this->normalizeClassName($fqcn);
+    /**
+     * @param array<string, array{fqcn: string, alias: ?string}> $imports
+     * @return array<string, string>
+     */
+    private function buildImportAliases(array $imports): array
+    {
+        $aliases = [];
+        $used = [];
+        $groups = [];
 
-                if ($import['alias'] !== null && $import['alias'] !== '') {
-                    $alias = $import['alias'];
-                    $aliases[$fqcn] = $alias;
-                    $used[$alias] = true;
-                    continue;
-                }
+        foreach ($imports as $fqcn => $import) {
+            $fqcn = $this->normalizeClassName($fqcn);
 
-                $base = $this->classBasename($fqcn);
-                $groups[$base][] = $fqcn;
+            if ($import['alias'] !== null && $import['alias'] !== '') {
+                $alias = $import['alias'];
+                $aliases[$fqcn] = $alias;
+                $used[$alias] = true;
+                continue;
             }
 
-            foreach ($groups as $base => $fqcnList) {
-                if (count($fqcnList) === 1) {
-                    $fqcn = $fqcnList[0];
-                    $alias = $this->ensureUniqueAlias($base, $used);
-                    $aliases[$fqcn] = $alias;
-                    continue;
-                }
-
-                foreach ($fqcnList as $fqcn) {
-                    $prefix = $this->detectContextPrefix($fqcn) ?? $this->deriveNamespaceHint($fqcn) ?? '';
-                    $alias = $this->ensureUniqueAlias($prefix . $base, $used);
-                    $aliases[$fqcn] = $alias;
-                }
-            }
-
-            return $aliases;
+            $base = $this->classBasename($fqcn);
+            $groups[$base][] = $fqcn;
         }
 
-        private function ensureUniqueAlias(string $alias, array &$used): string
-        {
-            $candidate = $alias !== '' ? $alias : 'Alias';
-            $index = 2;
-
-            while (isset($used[$candidate])) {
-                $candidate = $alias !== '' ? $alias . $index : 'Alias' . $index;
-                ++$index;
+        foreach ($groups as $base => $fqcnList) {
+            if (count($fqcnList) === 1) {
+                $fqcn = $fqcnList[0];
+                $alias = $this->ensureUniqueAlias($base, $used);
+                $aliases[$fqcn] = $alias;
+                continue;
             }
 
-            $used[$candidate] = true;
-
-            return $candidate;
-        }
-
-        private function detectContextPrefix(string $fqcn): ?string
-        {
-            if (preg_match('/\\(Central|Tenant|Shared)\\/i', $fqcn, $matches) === 1) {
-                return Str::studly($matches[1]);
-            }
-
-            return null;
-        }
-
-        private function deriveNamespaceHint(string $fqcn): ?string
-        {
-            $segments = explode('\\', trim($fqcn, '\\'));
-
-            array_pop($segments);
-
-            while ($segments !== []) {
-                $segment = array_pop($segments);
-                $segment = trim($segment);
-
-                if ($segment === '' || in_array(strtolower($segment), ['repositories', 'models', 'requests', 'resources'], true)) {
-                    continue;
-                }
-
-                return Str::studly($segment);
-            }
-
-            return null;
-        }
-                return $candidate;
+            foreach ($fqcnList as $fqcn) {
+                $prefix = $this->detectContextPrefix($fqcn) ?? $this->deriveNamespaceHint($fqcn) ?? '';
+                $alias = $this->ensureUniqueAlias($prefix . $base, $used);
+                $aliases[$fqcn] = $alias;
             }
         }
 
+        return $aliases;
+    }
+
+    private function ensureUniqueAlias(string $alias, array &$used): string
+    {
+        $candidate = $alias !== '' ? $alias : 'Alias';
         $index = 2;
 
-        do {
-            $candidate = $base . $index;
+        while (isset($used[$candidate])) {
+            $candidate = $alias !== '' ? $alias . $index : 'Alias' . $index;
             ++$index;
-        } while (isset($usedAliases[$candidate]));
+        }
+
+        $used[$candidate] = true;
 
         return $candidate;
+    }
+
+    private function detectContextPrefix(string $fqcn): ?string
+    {
+        if (preg_match('/\\\\(Central|Tenant|Shared)\\\\/i', $fqcn, $matches) === 1) {
+            return Str::studly($matches[1]);
+        }
+
+        return null;
+    }
+
+    private function deriveNamespaceHint(string $fqcn): ?string
+    {
+        $segments = explode('\\', trim($fqcn, '\\'));
+
+        array_pop($segments);
+
+        while ($segments !== []) {
+            $segment = array_pop($segments);
+            $segment = trim($segment);
+
+            if ($segment === '' || in_array(strtolower($segment), ['repositories', 'models', 'requests', 'resources'], true)) {
+                continue;
+            }
+
+            return Str::studly($segment);
+        }
+
+        return null;
+    }
+
+    private function determineTenancyMode(array $blueprint): string
+    {
+        $mode = strtolower((string) ($blueprint['tenancy']['mode'] ?? ''));
+
+        if ($mode === '') {
+            $path = (string) ($blueprint['path'] ?? '');
+            $mode = $this->inferTenancyModeFromPath($path);
+        }
+
+        return $mode !== '' ? $mode : 'central';
+    }
+
+    private function inferTenancyModeFromPath(string $path): string
+    {
+        $lower = strtolower($path);
+
+        if (str_contains($lower, '/tenant/') || str_contains($lower, '\\tenant\\')) {
+            return 'tenant';
+        }
+
+        if (str_contains($lower, '/shared/') || str_contains($lower, '\\shared\\')) {
+            return 'shared';
+        }
+
+        if (str_contains($lower, '/central/') || str_contains($lower, '\\central\\')) {
+            return 'central';
+        }
+
+        return '';
+    }
+
+    private function detectProviderNamespace(?string $contents): ?string
+    {
+        if ($contents === null) {
+            return null;
+        }
+
+        if (preg_match('/^namespace\s+([^;]+);/m', $contents, $matches) === 1) {
+            return trim($matches[1]);
+        }
+
+        return null;
     }
 
     /**

@@ -1,0 +1,36 @@
+{#
+  Stub: Hexagonal infrastructure AppServiceProvider bindings
+  Variables:
+    - namespace
+    - imports (array of { fqcn, alias|null })
+    - bindings (array of { interface_alias, implementation_alias })
+#}
+<?php
+
+namespace {{ namespace|default('App\\Providers') }};
+
+{% for import in imports %}use {{ import.fqcn }}{% if import.alias %} as {{ import.alias }}{% endif %};
+{% endfor %}
+
+class AppServiceProvider extends ServiceProvider
+{
+    /**
+     * Register any application services.
+     */
+    public function register(): void
+    {
+{% if bindings %}
+{% for binding in bindings %}        $this->app->bind({{ binding.interface_alias }}::class, {{ binding.implementation_alias }}::class);
+{% endfor %}{% else %}
+        //
+{% endif %}
+    }
+
+    /**
+     * Bootstrap any application services.
+     */
+    public function boot(): void
+    {
+        //
+    }
+}

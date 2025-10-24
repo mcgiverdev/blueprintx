@@ -123,6 +123,13 @@ class DomainLayerGenerator implements LayerGenerator
         ];
 
         $namespaces = $this->deriveNamespaces($blueprint, $options);
+        $errors = [
+            'custom' => $this->buildCustomErrors($blueprint, $namespaces, $paths),
+        ];
+        $tenancy = $this->buildTenancyContext($blueprint, $options, $paths, $namespaces);
+        $auth = [
+            'is_auth_model' => $this->isAuthModel($blueprint),
+        ];
 
         return [
             'blueprint' => $blueprint->toArray(),
@@ -131,10 +138,9 @@ class DomainLayerGenerator implements LayerGenerator
             'namespaces' => $namespaces,
             'naming' => $this->namingContext($blueprint),
             'model' => $this->deriveModelContext($blueprint, $namespaces),
-            'errors' => [
-                'custom' => $this->buildCustomErrors($blueprint, $namespaces, $paths),
-            ],
-            'tenancy' => $this->buildTenancyContext($blueprint, $options, $paths, $namespaces),
+            'errors' => $errors,
+            'auth' => $auth,
+            'tenancy' => $tenancy,
             'driver' => [
                 'name' => $driver->name(),
                 'layers' => $driver->layers(),
@@ -360,6 +366,10 @@ class DomainLayerGenerator implements LayerGenerator
                 $hidden[] = $field->name;
                 $hasPasswordField = true;
             }
+
+            if ($field->name === 'remember_token') {
+                $hidden[] = $field->name;
+            }
         }
 
         $options = $blueprint->options();
@@ -389,12 +399,12 @@ class DomainLayerGenerator implements LayerGenerator
             $identifierKeyType = 'string';
         }
 
-        $relationReturnTypes = [];
-        $relationImports = [];
-        $relations = [];
-        $relationMethodNames = [];
-        $selfClass = Str::studly($blueprint->entity());
-        $domainModelsNamespace = $namespaces['domain_models'];
+    $relationReturnTypes = [];
+    $relationImports = [];
+    $relations = [];
+    $relationMethodNames = [];
+    $selfClass = Str::studly($blueprint->entity());
+    $domainModelsNamespace = $namespaces['domain_models'];
 
         foreach ($blueprint->relations() as $relation) {
             $type = strtolower($relation->type);
@@ -449,16 +459,11 @@ class DomainLayerGenerator implements LayerGenerator
             ];
         }
 
+        $relationReturnTypes = array_values(array_unique($relationReturnTypes));
+        $relationImports = array_values(array_unique($relationImports));
+        $hidden = array_values(array_unique($hidden));
+
         return [
-            'fillable' => $fillable,
-            'casts' => $casts,
-            'hidden' => $hidden,
-            'soft_deletes' => $softDeletes,
-            'timestamps' => $timestampsEnabled,
-            'relation_return_types' => $relationReturnTypes,
-            'relation_imports' => $relationImports,
-            'relations' => $relations,
-            'has_password_field' => $hasPasswordField,
             'identifier' => [
                 'field' => $identifierField,
                 'php_type' => $identifierPhpType,
@@ -466,6 +471,16 @@ class DomainLayerGenerator implements LayerGenerator
                 'auto_increment' => $identifierAutoIncrement,
                 'key_type' => $identifierKeyType,
             ],
+            'fillable' => $fillable,
+            'casts' => $casts,
+            'hidden' => $hidden,
+            'relations' => $relations,
+            'relation_return_types' => $relationReturnTypes,
+            'relation_imports' => $relationImports,
+            'soft_deletes' => $softDeletes,
+            'timestamps' => $timestampsEnabled,
+            'authenticatable' => $this->isAuthModel($blueprint),
+            'hash_password' => $hasPasswordField,
         ];
     }
 
@@ -505,6 +520,46 @@ class DomainLayerGenerator implements LayerGenerator
         }
 
         return $normalized;
+    }
+
+    private function isAuthModel(Blueprint $blueprint): bool
+    {
+        $metadata = $blueprint->metadata();
+        $tags = [];
+
+        if (isset($metadata['tags']) && is_array($metadata['tags'])) {
+            foreach ($metadata['tags'] as $tag) {
+                if (! is_string($tag)) {
+                    continue;
+                }
+
+                $tags[] = strtolower($tag);
+            }
+        }
+
+        if (in_array('auth', $tags, true) || in_array('authentication', $tags, true)) {
+            return true;
+        }
+
+        $module = $blueprint->module();
+
+        if (is_string($module) && $module !== '' && str_contains(strtolower($module), 'auth')) {
+            return true;
+        }
+
+        $entity = strtolower($blueprint->entity());
+
+        if (! in_array($entity, ['user', 'users'], true)) {
+            return false;
+        }
+
+        foreach ($blueprint->fields() as $field) {
+            if ($this->isPasswordField($field)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

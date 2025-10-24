@@ -3,7 +3,7 @@
 ## Bloqueos críticos
 
 - [x] Alias correctos en `app/Providers/AppServiceProvider.php`: la generación ahora asigna aliases únicos (Central/Tenant/Shared) para interfaces/repositorios duplicados y actualiza los `bind()` sin romper el instalador tenancy.
-- Ajustar imports en `routes/api.php`: usar alias únicos (ej. `CentralUserController`, `TenantUserController`) y aplicar middlewares correctos según contexto.
+- [x] Ajustar imports en rutas API: el generador asigna alias únicos para controladores (Central/Tenant/Shared) y deriva rutas tenant a `routes/tenant.php` conforme a Stancl.
 - Generar configuración de guardias tenancy en `config/auth.php`: definir guard `tenant`, proveedor dedicado y broker de contraseñas cuando existan blueprints con `tenancy.mode = tenant`.
 - Revisar flujo de instalación `stancl/tenancy`: evitar re-ejecución de `php artisan migrate:fresh` por defecto o solicitar confirmación; capturar errores antes de abortar el comando principal.
 

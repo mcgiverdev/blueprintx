@@ -9,8 +9,6 @@
 
 namespace {{ namespaces.domain_models|default('App\\Domain\\Models') }};
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
 {% set modelMeta = model|default({}) %}
 {% set identifier = modelMeta.identifier|default({}) %}
 {% set identifierColumnType = identifier.column_type|default(null) %}
@@ -19,6 +17,17 @@ use Illuminate\Database\Eloquent\Model;
 {% set relationReturnTypes = modelMeta.relation_return_types|default([]) %}
 {% set relationImports = modelMeta.relation_imports|default([]) %}
 {% set softDeletes = modelMeta.soft_deletes|default(false) %}
+{% set authenticatable = modelMeta.authenticatable|default(false) %}
+{% set hiddenAttributes = modelMeta.hidden|default([]) %}
+{% set hashPassword = modelMeta.hash_password|default(false) %}
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+{% if authenticatable %}
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
+{% else %}
+use Illuminate\Database\Eloquent\Model;
+{% endif %}
 {% if usesUuidTrait %}
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 {% endif %}
@@ -34,10 +43,17 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 {% for import in relationImports %}
 use {{ import }};
 {% endfor %}
+{% if hashPassword %}
+use Illuminate\Support\Facades\Hash;
+{% endif %}
 
-class {{ entity.name|default('Sample')|studly }} extends Model
+class {{ entity.name|default('Sample')|studly }} extends {% if authenticatable %}Authenticatable{% else %}Model{% endif %}
 {
     use HasFactory;
+{% if authenticatable %}
+    use HasApiTokens;
+    use Notifiable;
+{% endif %}
 {% if usesUuidTrait %}
     use HasUuids;
 {% endif %}
@@ -72,6 +88,18 @@ class {{ entity.name|default('Sample')|studly }} extends Model
 {% endfor %}
     ];
 
+{% if hiddenAttributes is not empty %}
+    /**
+     * @var array<int, string>
+     */
+    protected $hidden = [
+{% for attribute in hiddenAttributes %}
+        '{{ attribute }}',
+{% endfor %}
+    ];
+
+{% endif %}
+
 {% if identifier.auto_increment is defined and not identifier.auto_increment %}
     public $incrementing = false;
 
@@ -90,4 +118,19 @@ class {{ entity.name|default('Sample')|studly }} extends Model
         return $this->{{ relation.eloquent_method }}({{ relation.related_class }}::class{% if relation.foreign_key %}, '{{ relation.foreign_key }}'{% endif %});
     }
 {% endfor -%}
+{% if hashPassword %}
+
+    public function setPasswordAttribute($value): void
+    {
+        if (! is_string($value) || $value === '') {
+            $this->attributes['password'] = $value;
+
+            return;
+        }
+
+        $this->attributes['password'] = Hash::needsRehash($value)
+            ? Hash::make($value)
+            : $value;
+    }
+{% endif %}
 }

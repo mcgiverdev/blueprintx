@@ -1283,19 +1283,24 @@ class ApiLayerGenerator implements LayerGenerator
 
     private function updateRouteFile(Blueprint $blueprint, array $context): ?GeneratedFile
     {
-        $routesPath = $this->resolveRoutesFilePath();
+        $routeTarget = $this->determineRouteTarget($blueprint);
+        $routesRelative = $routeTarget['relative'];
+        $routesPath = $this->resolveRoutesFilePath($routesRelative);
 
-        if ($routesPath === null || ! is_file($routesPath)) {
-            return null;
+        $existingContents = null;
+
+        if ($routesPath !== null && is_file($routesPath)) {
+            $existingContents = @file_get_contents($routesPath) ?: '';
         }
 
-        $original = @file_get_contents($routesPath);
-
-        if ($original === false) {
-            return null;
-        }
+        $original = $existingContents ?? $this->defaultRoutesFileStub();
+        $isNewFile = $existingContents === null;
 
         $normalized = str_replace(["\r\n", "\r"], "\n", $original);
+
+        if (! $this->hasRouteFacadeImport($normalized)) {
+            $normalized = $this->insertUseStatement($normalized, 'use Illuminate\\Support\\Facades\\Route;');
+        }
 
         $controllerNamespace = trim($context['namespaces']['api_root'] ?? '', '\\');
         $controllerBase = $context['naming']['entity_studly'] ?? null;
@@ -1307,11 +1312,9 @@ class ApiLayerGenerator implements LayerGenerator
         $controllerShort = $controllerBase . 'Controller';
         $controllerFqcn = $controllerNamespace !== '' ? $controllerNamespace . '\\' . $controllerShort : $controllerShort;
 
-        $useStatement = sprintf('use %s;', $controllerFqcn);
-
-        if (! str_contains($normalized, $useStatement)) {
-            $normalized = $this->insertUseStatement($normalized, $useStatement);
-        }
+        $importResult = $this->ensureClassImport($normalized, $controllerFqcn, $routeTarget['mode']);
+        $normalized = $importResult['contents'];
+        $controllerAlias = $importResult['alias'];
 
         $resourcePath = $context['routes']['resource'] ?? null;
 
@@ -1327,7 +1330,7 @@ class ApiLayerGenerator implements LayerGenerator
 
         $middleware = $this->sanitizeMiddleware($blueprint->apiMiddleware());
 
-        $existingRoute = $this->findRouteRegistration($normalized, $controllerShort);
+        $existingRoute = $this->findRouteRegistration($normalized, $controllerAlias);
         $normalizedTargetUri = $this->normalizeRouteUri($routeUri);
         $hasChanges = false;
 
@@ -1335,7 +1338,7 @@ class ApiLayerGenerator implements LayerGenerator
             $existingUri = $this->normalizeRouteUri($existingRoute['uri']);
 
             if ($existingUri !== $normalizedTargetUri) {
-                $replacement = $this->buildRouteLine($controllerShort, $routeUri, $existingRoute['indent']);
+                $replacement = $this->buildRouteLine($controllerAlias, $routeUri, $existingRoute['indent']);
                 $normalized = substr_replace($normalized, $replacement, $existingRoute['offset'], $existingRoute['length']);
                 $hasChanges = true;
             }
@@ -1346,10 +1349,10 @@ class ApiLayerGenerator implements LayerGenerator
                 return null;
             }
 
-            return new GeneratedFile('routes/api.php', $updated, true);
+            return new GeneratedFile($routesRelative, $updated, ! $isNewFile);
         }
 
-        $routeBlock = $this->buildRouteBlock($routeUri, $controllerShort, $middleware);
+        $routeBlock = $this->buildRouteBlock($routeUri, $controllerAlias, $middleware);
 
         $normalized = rtrim($normalized, "\n") . "\n\n" . $routeBlock . "\n";
 
@@ -1359,13 +1362,11 @@ class ApiLayerGenerator implements LayerGenerator
             return null;
         }
 
-        return new GeneratedFile('routes/api.php', $updated, true);
+        return new GeneratedFile($routesRelative, $updated, ! $isNewFile);
     }
 
-    private function resolveRoutesFilePath(): ?string
+    private function resolveRoutesFilePath(string $routesRelative): ?string
     {
-        $routesRelative = 'routes' . DIRECTORY_SEPARATOR . 'api.php';
-
         if (function_exists('app')) {
             $application = app();
 
@@ -1491,6 +1492,266 @@ class ApiLayerGenerator implements LayerGenerator
             'offset' => $matches[0][1],
             'length' => strlen($matches[0][0]),
         ];
+    }
+
+    /**
+     * @return array{relative:string, mode:string}
+     */
+    private function determineRouteTarget(Blueprint $blueprint): array
+    {
+        $tenancy = $blueprint->tenancy();
+        $mode = strtolower((string) ($tenancy['mode'] ?? ''));
+
+        if ($mode === '') {
+            $mode = $this->inferTenancyModeFromPath($blueprint->path());
+        }
+
+        $mode = match ($mode) {
+            'tenant' => 'tenant',
+            'shared' => 'shared',
+            default => 'central',
+        };
+
+        $relative = match ($mode) {
+            'tenant' => 'routes/tenant.php',
+            default => 'routes/api.php',
+        };
+
+        return [
+            'relative' => $relative,
+            'mode' => $mode,
+        ];
+    }
+
+    private function inferTenancyModeFromPath(string $path): string
+    {
+        $lower = strtolower($path);
+
+        if (str_contains($lower, '/tenant/') || str_contains($lower, '\\tenant\\')) {
+            return 'tenant';
+        }
+
+        if (str_contains($lower, '/shared/') || str_contains($lower, '\\shared\\')) {
+            return 'shared';
+        }
+
+        if (str_contains($lower, '/central/') || str_contains($lower, '\\central\\')) {
+            return 'central';
+        }
+
+        return '';
+    }
+
+    private function defaultRoutesFileStub(): string
+    {
+        return "<?php\n\nuse Illuminate\\Support\\Facades\\Route;\n";
+    }
+
+    private function hasRouteFacadeImport(string $contents): bool
+    {
+        foreach ($this->parseUseStatements($contents) as $import) {
+            if ($import['fqcn'] === 'Illuminate\\Support\\Facades\\Route') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<int, array{fqcn:string, alias:?string, start:int, length:int, statement:string}>
+     */
+    private function parseUseStatements(string $contents): array
+    {
+        $matches = [];
+        preg_match_all('/^use\s+([^;]+);/m', $contents, $matches, PREG_OFFSET_CAPTURE);
+
+        $imports = [];
+
+        $count = count($matches[0]);
+
+        for ($index = 0; $index < $count; $index++) {
+            $statementText = $matches[0][$index][0];
+            $statementOffset = $matches[0][$index][1];
+            $value = $matches[1][$index][0];
+
+            $alias = null;
+            $fqcn = $value;
+
+            if (stripos($value, ' as ') !== false) {
+                [$fqcn, $alias] = array_map('trim', explode(' as ', $value, 2));
+            }
+
+            $imports[] = [
+                'fqcn' => $this->normalizeClassName($fqcn),
+                'alias' => isset($alias) && $alias !== '' ? $alias : null,
+                'start' => $statementOffset,
+                'length' => strlen($statementText),
+                'statement' => $statementText,
+            ];
+        }
+
+        return $imports;
+    }
+
+    /**
+     * @param array<string, bool> $usedAliases
+     * @return array{contents:string, alias:string}
+     */
+    private function ensureClassImport(string $contents, string $fqcn, string $tenancyMode, array $usedAliases = []): array
+    {
+        $imports = $this->parseUseStatements($contents);
+        $normalizedFqcn = $this->normalizeClassName($fqcn);
+
+        $aliasCounts = [];
+        foreach ($imports as $import) {
+            $aliasName = $import['alias'] ?? $this->classBasename($import['fqcn']);
+            $aliasCounts[$aliasName] = ($aliasCounts[$aliasName] ?? 0) + 1;
+        }
+
+        foreach ($imports as $index => $import) {
+            if ($import['fqcn'] === $normalizedFqcn) {
+                $currentAlias = $import['alias'] ?? $this->classBasename($normalizedFqcn);
+
+                if ($aliasCounts[$currentAlias] <= 1) {
+                    return ['contents' => $contents, 'alias' => $currentAlias];
+                }
+
+                $aliasCounts[$currentAlias]--;
+
+                if ($aliasCounts[$currentAlias] <= 0) {
+                    unset($aliasCounts[$currentAlias]);
+                }
+
+                $usedAliases = [];
+
+                foreach ($aliasCounts as $aliasName => $count) {
+                    if ($count > 0) {
+                        $usedAliases[$aliasName] = true;
+                    }
+                }
+
+                $alias = $this->determineControllerAlias($normalizedFqcn, $tenancyMode, $usedAliases);
+
+                if ($alias === $currentAlias) {
+                    return ['contents' => $contents, 'alias' => $alias];
+                }
+
+                $replacement = $alias === $this->classBasename($normalizedFqcn)
+                    ? sprintf('use %s;', $normalizedFqcn)
+                    : sprintf('use %s as %s;', $normalizedFqcn, $alias);
+
+                $contents = substr_replace($contents, $replacement, $import['start'], $import['length']);
+
+                return ['contents' => $contents, 'alias' => $alias];
+            }
+        }
+
+        $usedAliases = [];
+
+        foreach ($aliasCounts as $aliasName => $count) {
+            if ($count > 0) {
+                $usedAliases[$aliasName] = true;
+            }
+        }
+
+    $alias = $this->determineControllerAlias($normalizedFqcn, $tenancyMode, $usedAliases);
+
+        $statement = $alias === $this->classBasename($normalizedFqcn)
+            ? sprintf('use %s;', $normalizedFqcn)
+            : sprintf('use %s as %s;', $normalizedFqcn, $alias);
+
+        if (! str_contains($contents, $statement)) {
+            $contents = $this->insertUseStatement($contents, $statement);
+        }
+
+        return ['contents' => $contents, 'alias' => $alias];
+    }
+
+    /**
+     * @param array<string, bool> $usedAliases
+     */
+    private function determineControllerAlias(string $fqcn, string $tenancyMode, array $usedAliases): string
+    {
+        $base = $this->classBasename($fqcn);
+
+        if (! isset($usedAliases[$base])) {
+            return $base;
+        }
+
+        $candidates = [];
+
+        if ($tenancyMode !== '') {
+            $candidates[] = Str::studly($tenancyMode) . $base;
+        }
+
+        if ($prefix = $this->detectContextPrefixFromFqcn($fqcn)) {
+            $candidates[] = $prefix . $base;
+        }
+
+        if ($hint = $this->deriveNamespaceHint($fqcn)) {
+            $candidates[] = $hint . $base;
+        }
+
+        foreach ($candidates as $candidate) {
+            if ($candidate !== '' && ! isset($usedAliases[$candidate])) {
+                return $candidate;
+            }
+        }
+
+        $index = 2;
+
+        do {
+            $candidate = $base . $index;
+            ++$index;
+        } while (isset($usedAliases[$candidate]));
+
+        return $candidate;
+    }
+
+    private function detectContextPrefixFromFqcn(string $fqcn): ?string
+    {
+        if (preg_match('/\\\\(Central|Tenant|Shared)\\\\/i', $fqcn, $matches) === 1) {
+            return Str::studly($matches[1]);
+        }
+
+        return null;
+    }
+
+    private function deriveNamespaceHint(string $fqcn): ?string
+    {
+        $segments = explode('\\', trim($fqcn, '\\'));
+        array_pop($segments);
+
+        while ($segments !== []) {
+            $segment = array_pop($segments);
+            $segment = trim($segment);
+
+            if ($segment === '' || in_array(strtolower($segment), ['controllers', 'api'], true)) {
+                continue;
+            }
+
+            return Str::studly($segment);
+        }
+
+        return null;
+    }
+
+    private function normalizeClassName(string $class): string
+    {
+        return ltrim(trim($class), '\\');
+    }
+
+    private function classBasename(string $class): string
+    {
+        $class = $this->normalizeClassName($class);
+        $position = strrpos($class, '\\');
+
+        if ($position === false) {
+            return $class;
+        }
+
+        return substr($class, $position + 1);
     }
 
     private function insertUseStatement(string $normalized, string $statement): string

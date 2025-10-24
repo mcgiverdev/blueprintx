@@ -60,16 +60,37 @@ class AuthScaffoldingCreator
             $model = null;
         }
 
-        $this->ensureAuthController($architecture, $controllersPath, $controllersNamespace, $requestsNamespace, $resourcesNamespace, $force, $dryRun);
-        $this->ensureLoginRequest($architecture, $requestsPath, $requestsNamespace, $force, $dryRun);
-        $this->ensureRegisterRequest($architecture, $requestsPath, $requestsNamespace, $model, $force, $dryRun);
-        $this->ensureUserResource($architecture, $resourcesPath, $resourcesNamespace, $model, $force, $dryRun);
-        $this->ensureApplicationUserModel($architecture, $model, $force, $dryRun);
-        $this->ensurePersonalAccessTokensMigration($model, $force, $dryRun);
+        $contexts = $this->prepareContextDefinitions(
+            is_array($options['contexts'] ?? null) ? $options['contexts'] : [],
+            $controllersNamespace,
+            $requestsNamespace,
+            $resourcesNamespace,
+            $controllersPath,
+            $requestsPath,
+            $resourcesPath,
+            $model
+        );
+
+        if ($contexts === []) {
+            return;
+        }
+
+        foreach ($contexts as $context) {
+            $this->ensureAuthController($architecture, $context, $force, $dryRun);
+            $this->ensureLoginRequest($architecture, $context, $force, $dryRun);
+            $this->ensureRegisterRequest($architecture, $context, $force, $dryRun);
+            $this->ensureUserResource($architecture, $context, $force, $dryRun);
+        }
+
+        $primaryModel = $contexts['central']['model'] ?? ($contexts[array_key_first($contexts)]['model'] ?? null);
+
+        $this->ensureApplicationUserModel($architecture, $primaryModel, $force, $dryRun);
+        $this->ensurePersonalAccessTokensMigrationForContexts($contexts, $force, $dryRun);
         $this->ensureSanctumGuide($architecture, $sanctumInstalled, $force, $dryRun);
 
         if (! $dryRun) {
-            $this->ensureRoutes($controllersNamespace);
+            $this->ensureRoutes($controllersNamespace, $contexts);
+            $this->ensureAuthConfiguration($contexts, $force);
         }
 
         if (! $dryRun) {
@@ -79,16 +100,170 @@ class AuthScaffoldingCreator
         }
     }
 
-    private function ensureAuthController(
-        string $architecture,
-        string $controllersPath,
+    /**
+     * @param array<string, mixed> $contextOptions
+     * @return array<string, array<string, mixed>>
+     */
+    private function prepareContextDefinitions(
+        array $contextOptions,
         string $controllersNamespace,
         string $requestsNamespace,
         string $resourcesNamespace,
-        bool $force,
-        bool $dryRun,
-    ): void {
-        $path = $this->resolveAbsolutePath($controllersPath, 'Auth/AuthController.php');
+        string $controllersPath,
+        string $requestsPath,
+        string $resourcesPath,
+        ?array $fallbackModel,
+    ): array {
+        $contexts = [];
+
+        if ($contextOptions !== []) {
+            foreach ($contextOptions as $key => $definition) {
+                $model = $this->extractContextModel($definition);
+
+                if ($model === null) {
+                    continue;
+                }
+
+                $candidateKey = is_string($key) ? $key : ($definition['key'] ?? null);
+                $context = $this->makeContextDefinition(
+                    $candidateKey,
+                    $model,
+                    $controllersNamespace,
+                    $requestsNamespace,
+                    $resourcesNamespace,
+                    $controllersPath,
+                    $requestsPath,
+                    $resourcesPath,
+                );
+
+                if ($context !== null) {
+                    $contexts[$context['key']] = $context;
+                }
+            }
+        }
+
+        if ($contexts === [] && $fallbackModel !== null) {
+            $fallback = $this->makeContextDefinition(
+                'central',
+                $fallbackModel,
+                $controllersNamespace,
+                $requestsNamespace,
+                $resourcesNamespace,
+                $controllersPath,
+                $requestsPath,
+                $resourcesPath,
+            );
+
+            if ($fallback !== null) {
+                $contexts[$fallback['key']] = $fallback;
+            }
+        }
+
+        ksort($contexts);
+
+        return $contexts;
+    }
+
+    private function extractContextModel(mixed $definition): ?array
+    {
+        if (is_array($definition) && isset($definition['model']) && is_array($definition['model'])) {
+            return $definition['model'];
+        }
+
+        return null;
+    }
+
+    private function makeContextDefinition(
+        ?string $key,
+        array $model,
+        string $controllersNamespace,
+        string $requestsNamespace,
+        string $resourcesNamespace,
+        string $controllersPath,
+        string $requestsPath,
+        string $resourcesPath,
+    ): ?array {
+        $tenancyMode = $this->determineTenancyMode($model);
+        $contextKey = $this->normalizeContextKey($key, $tenancyMode);
+        $studlyKey = Str::studly($contextKey);
+    $controllerNamespace = $this->appendNamespace($controllersNamespace, 'Auth\\' . $studlyKey);
+        $controllerClass = $studlyKey . 'AuthController';
+        $controllerPath = $this->resolveAbsolutePath($controllersPath, sprintf('Auth/%s/%s.php', $studlyKey, $controllerClass));
+    $controllerFqn = $controllerNamespace . '\\' . $controllerClass;
+
+    $requestsNamespaceFull = $this->appendNamespace($requestsNamespace, 'Auth\\' . $studlyKey);
+        $loginClass = $studlyKey . 'LoginRequest';
+        $registerClass = $studlyKey . 'RegisterRequest';
+        $loginPath = $this->resolveAbsolutePath($requestsPath, sprintf('Auth/%s/%s.php', $studlyKey, $loginClass));
+        $registerPath = $this->resolveAbsolutePath($requestsPath, sprintf('Auth/%s/%s.php', $studlyKey, $registerClass));
+
+    $resourceNamespace = $this->appendNamespace($resourcesNamespace, 'Auth\\' . $studlyKey);
+        $resourceClass = $studlyKey . 'UserResource';
+        $resourcePath = $this->resolveAbsolutePath($resourcesPath, sprintf('Auth/%s/%s.php', $studlyKey, $resourceClass));
+
+        $userModelFqn = $this->resolveDomainUserFqn($model);
+
+        if ($userModelFqn === null) {
+            return null;
+        }
+
+        return [
+            'key' => $contextKey,
+            'studly_key' => $studlyKey,
+            'guard' => $contextKey,
+            'tenancy_mode' => $tenancyMode,
+            'tenant_aware' => $tenancyMode === 'tenant',
+            'controller' => [
+                'namespace' => $controllerNamespace,
+                'class' => $controllerClass,
+                'path' => $controllerPath,
+                'fqn' => $controllerFqn,
+            ],
+            'requests' => [
+                'namespace' => $requestsNamespaceFull,
+                'login_class' => $loginClass,
+                'register_class' => $registerClass,
+                'login_path' => $loginPath,
+                'register_path' => $registerPath,
+                'login_fqn' => $requestsNamespaceFull . '\\' . $loginClass,
+                'register_fqn' => $requestsNamespaceFull . '\\' . $registerClass,
+            ],
+            'resource' => [
+                'namespace' => $resourceNamespace,
+                'class' => $resourceClass,
+                'path' => $resourcePath,
+                'fqn' => $resourceNamespace . '\\' . $resourceClass,
+            ],
+            'user_model_fqn' => $userModelFqn,
+            'model' => $model,
+            'supports_registration' => true,
+        ];
+    }
+
+    private function determineTenancyMode(array $model): string
+    {
+        $mode = strtolower((string) ($model['tenancy']['mode'] ?? 'central'));
+
+        return in_array($mode, ['tenant', 'central'], true) ? $mode : 'central';
+    }
+
+    private function normalizeContextKey(?string $key, string $tenancyMode): string
+    {
+        $normalized = is_string($key) ? strtolower(trim($key)) : '';
+
+        if (in_array($normalized, ['central', 'tenant'], true)) {
+            return $normalized;
+        }
+
+        return $tenancyMode === 'tenant' ? 'tenant' : 'central';
+    }
+
+    private function ensureAuthController(string $architecture, array $context, bool $force, bool $dryRun): void
+    {
+        $controller = $context['controller'];
+        $requests = $context['requests'];
+        $resource = $context['resource'];
+        $path = $controller['path'];
 
         if ($dryRun) {
             return;
@@ -101,10 +276,17 @@ class AuthScaffoldingCreator
         $this->files->ensureDirectoryExists((string) dirname($path));
 
         $contents = $this->renderTemplate($architecture, 'controller.stub.twig', [
-            'namespace' => $this->appendNamespace($controllersNamespace, 'Auth'),
-            'login_request_fqn' => $this->appendNamespace($requestsNamespace, 'Auth\\LoginRequest'),
-            'register_request_fqn' => $this->appendNamespace($requestsNamespace, 'Auth\\RegisterRequest'),
-            'user_resource_fqn' => $this->appendNamespace($resourcesNamespace, 'Crm\\UserResource'),
+            'namespace' => $controller['namespace'],
+            'controller_class' => $controller['class'],
+            'login_request_fqn' => $requests['login_fqn'],
+            'register_request_fqn' => $requests['register_fqn'],
+            'login_request_class' => $requests['login_class'],
+            'register_request_class' => $requests['register_class'],
+            'user_resource_fqn' => $resource['fqn'],
+            'user_model_fqn' => $context['user_model_fqn'],
+            'tenant_aware' => (bool) ($context['tenant_aware'] ?? false),
+            'guard' => $context['guard'],
+            'supports_registration' => (bool) ($context['supports_registration'] ?? true),
         ]);
 
         $previous = $this->getExistingContents($path);
@@ -114,9 +296,10 @@ class AuthScaffoldingCreator
         }
     }
 
-    private function ensureLoginRequest(string $architecture, string $requestsPath, string $requestsNamespace, bool $force, bool $dryRun): void
+    private function ensureLoginRequest(string $architecture, array $context, bool $force, bool $dryRun): void
     {
-        $path = $this->resolveAbsolutePath($requestsPath, 'Auth/LoginRequest.php');
+        $requests = $context['requests'];
+        $path = $requests['login_path'];
 
         if ($dryRun) {
             return;
@@ -129,7 +312,9 @@ class AuthScaffoldingCreator
         $this->files->ensureDirectoryExists((string) dirname($path));
 
         $contents = $this->renderTemplate($architecture, 'login-request.stub.twig', [
-            'namespace' => $this->appendNamespace($requestsNamespace, 'Auth'),
+            'namespace' => $requests['namespace'],
+            'class' => $requests['login_class'],
+            'tenancy_mode' => $context['tenancy_mode'],
         ]);
 
         $previous = $this->getExistingContents($path);
@@ -139,9 +324,14 @@ class AuthScaffoldingCreator
         }
     }
 
-    private function ensureRegisterRequest(string $architecture, string $requestsPath, string $requestsNamespace, ?array $model, bool $force, bool $dryRun): void
+    private function ensureRegisterRequest(string $architecture, array $context, bool $force, bool $dryRun): void
     {
-        $path = $this->resolveAbsolutePath($requestsPath, 'Auth/RegisterRequest.php');
+        if (! ($context['supports_registration'] ?? true)) {
+            return;
+        }
+
+        $requests = $context['requests'];
+        $path = $requests['register_path'];
 
         if ($dryRun) {
             return;
@@ -153,10 +343,11 @@ class AuthScaffoldingCreator
 
         $this->files->ensureDirectoryExists((string) dirname($path));
 
-        $rules = $this->prepareRegisterValidationRules($model);
+        $rules = $this->prepareRegisterValidationRules($context['model'] ?? null, $context);
 
         $contents = $this->renderTemplate($architecture, 'register-request.stub.twig', [
-            'namespace' => $this->appendNamespace($requestsNamespace, 'Auth'),
+            'namespace' => $requests['namespace'],
+            'class' => $requests['register_class'],
             'has_rules' => $rules !== [],
             'rules' => $rules,
         ]);
@@ -168,9 +359,10 @@ class AuthScaffoldingCreator
         }
     }
 
-    private function ensureUserResource(string $architecture, string $resourcesPath, string $resourcesNamespace, ?array $model, bool $force, bool $dryRun): void
+    private function ensureUserResource(string $architecture, array $context, bool $force, bool $dryRun): void
     {
-        $path = $this->resolveAbsolutePath($resourcesPath, 'Crm/UserResource.php');
+        $resource = $context['resource'];
+        $path = $resource['path'];
 
         if ($dryRun) {
             return;
@@ -182,11 +374,11 @@ class AuthScaffoldingCreator
 
         $this->files->ensureDirectoryExists((string) dirname($path));
 
-        $resourceNamespace = $this->appendNamespace($resourcesNamespace, 'Crm');
-        $resourceContext = $this->prepareUserResourceContext($model, $resourceNamespace);
+        $resourceContext = $this->prepareUserResourceContext($context['model'] ?? null, $resource['namespace'], $context);
 
         $contents = $this->renderTemplate($architecture, 'user-resource.stub.twig', [
-            'namespace' => $resourceNamespace,
+            'namespace' => $resource['namespace'],
+            'resource_class' => $resource['class'],
             'attributes' => $resourceContext['attributes'],
             'relationships' => $resourceContext['relationships'],
             'imports' => $resourceContext['imports'],
@@ -199,7 +391,7 @@ class AuthScaffoldingCreator
         }
     }
 
-    private function ensureRoutes(string $controllersNamespace): void
+    private function ensureRoutes(string $controllersNamespace, array $contexts): void
     {
         $path = base_path('routes/api.php');
 
@@ -210,22 +402,29 @@ class AuthScaffoldingCreator
         $original = $this->files->get($path);
         $normalized = str_replace(["\r\n", "\r"], "\n", $original);
 
-        $useStatement = sprintf('use %s\\Auth\\AuthController;', trim($controllersNamespace, '\\'));
+        $normalized = $this->removeLegacyAuthRoutes($normalized, $controllersNamespace);
 
-        if (! str_contains($normalized, $useStatement)) {
-            $normalized = $this->insertUseStatement($normalized, $useStatement);
+        foreach ($contexts as $context) {
+            $controllerFqn = $context['controller']['fqn'];
+
+            if (! str_contains($normalized, $controllerFqn)) {
+                $normalized = $this->insertUseStatement($normalized, sprintf('use %s;', $controllerFqn));
+            }
         }
 
-        if (! str_contains($normalized, "Route::prefix('auth')")) {
-            $authBlock = "\nRoute::prefix('auth')->group(function (): void {\n" .
-                "    Route::post('login', [AuthController::class, 'login']);\n" .
-                "    Route::post('register', [AuthController::class, 'register']);\n\n" .
-                "    Route::middleware(['auth:sanctum'])->group(function (): void {\n" .
-                "        Route::post('logout', [AuthController::class, 'logout']);\n" .
-                "        Route::get('me', [AuthController::class, 'me']);\n" .
-                "    });\n" .
-                "});\n";
+        $hasAllControllers = true;
 
+        foreach ($contexts as $context) {
+            $controllerClass = $context['controller']['class'];
+
+            if (! str_contains($normalized, $controllerClass . '::class')) {
+                $hasAllControllers = false;
+                break;
+            }
+        }
+
+        if (! $hasAllControllers) {
+            $authBlock = $this->buildAuthRouteBlock($contexts);
             $needle = "Route::prefix('crm')";
             $position = strpos($normalized, $needle);
 
@@ -245,12 +444,270 @@ class AuthScaffoldingCreator
         }
     }
 
+    private function ensureAuthConfiguration(array $contexts, bool $force): void
+    {
+        $path = base_path('config/auth.php');
+
+        if (! $this->files->exists($path)) {
+            return;
+        }
+
+        $original = $this->files->get($path);
+        $normalized = str_replace(["\r\n", "\r"], "\n", $original);
+
+        $guardsBlock = $this->extractArrayBlock($normalized, "'guards' => [");
+        $providersBlock = $this->extractArrayBlock($normalized, "'providers' => [");
+
+        if ($guardsBlock === null || $providersBlock === null) {
+            return;
+        }
+
+        $guardsContent = $guardsBlock['block'];
+        $providersContent = $providersBlock['block'];
+
+        $primaryContext = $contexts['central'] ?? reset($contexts);
+        $primaryProvider = ($primaryContext !== false) ? $primaryContext['key'] . '_users' : 'users';
+
+        foreach ($contexts as $context) {
+            $guardKey = $context['key'];
+            $providerKey = $context['key'] . '_users';
+
+            $guardsContent = $this->ensureGuardEntry($guardsContent, $guardsBlock['indent'], $guardKey, $providerKey);
+            $providersContent = $this->ensureProviderEntry($providersContent, $providersBlock['indent'], $providerKey, $context['user_model_fqn']);
+        }
+
+        if ($primaryContext !== false) {
+            $primaryProvider = $primaryContext['key'] . '_users';
+            $guardsContent = $this->updateGuardProvider($guardsContent, 'sanctum', $primaryProvider);
+            $guardsContent = $this->updateGuardProvider($guardsContent, 'api', $primaryProvider);
+            $providersContent = $this->synchronizeDefaultUserProvider($providersContent, $providersBlock['indent'], $primaryContext['user_model_fqn']);
+        }
+
+        $normalized = $this->replaceArrayBlock($normalized, $guardsBlock, $guardsContent);
+        $normalized = $this->replaceArrayBlock($normalized, $providersBlock, $providersContent);
+
+        $updated = $this->restoreLineEndings($original, $normalized);
+
+        if ($updated !== $original) {
+            if ($this->files->put($path, $updated) !== false) {
+                $this->recordWrittenFile($path, $updated, $original);
+            }
+        }
+    }
+
+    /**
+     * @return array{block:string,start:int,end:int,indent:string}|null
+     */
+    private function extractArrayBlock(string $contents, string $needle): ?array
+    {
+        $position = strpos($contents, $needle);
+
+        if ($position === false) {
+            return null;
+        }
+
+        $lineStart = strrpos(substr($contents, 0, $position), "\n");
+        $lineStart = $lineStart === false ? 0 : $lineStart + 1;
+        $line = substr($contents, $lineStart, $position - $lineStart);
+        preg_match('/^\s*/', $line, $matches);
+        $indent = $matches[0] ?? '';
+
+        $bracketStart = strpos($contents, '[', $position);
+
+        if ($bracketStart === false) {
+            return null;
+        }
+
+        $depth = 0;
+        $length = strlen($contents);
+        $end = null;
+
+        for ($i = $bracketStart; $i < $length; $i++) {
+            $char = $contents[$i];
+
+            if ($char === '[') {
+                $depth++;
+            } elseif ($char === ']') {
+                $depth--;
+
+                if ($depth === 0) {
+                    $end = $i;
+                    break;
+                }
+            }
+        }
+
+        if ($end === null) {
+            return null;
+        }
+
+        return [
+            'block' => substr($contents, $bracketStart, $end - $bracketStart + 1),
+            'start' => $bracketStart,
+            'end' => $end,
+            'indent' => $indent,
+        ];
+    }
+
+    private function replaceArrayBlock(string $contents, array $blockInfo, string $replacement): string
+    {
+        return substr($contents, 0, $blockInfo['start']) . $replacement . substr($contents, $blockInfo['end'] + 1);
+    }
+
+    private function ensureGuardEntry(string $block, string $indent, string $guardKey, string $providerKey): string
+    {
+        if (str_contains($block, "'{$guardKey}' => [")) {
+            return $block;
+        }
+
+        $entryIndent = $indent . '    ';
+        $innerIndent = $entryIndent . '    ';
+
+        $entry = sprintf(
+            "%s'%s' => [\n%s'driver' => 'sanctum',\n%s'provider' => '%s',\n%s],\n",
+            $entryIndent,
+            $guardKey,
+            $innerIndent,
+            $innerIndent,
+            $providerKey,
+            $entryIndent
+        );
+
+        return $this->insertArrayEntry($block, $entry, $indent);
+    }
+
+    private function ensureProviderEntry(string $block, string $indent, string $providerKey, string $modelFqn): string
+    {
+        if (str_contains($block, "'{$providerKey}' => [")) {
+            return $block;
+        }
+
+        $entryIndent = $indent . '    ';
+        $innerIndent = $entryIndent . '    ';
+
+        $entry = sprintf(
+            "%s'%s' => [\n%s'driver' => 'eloquent',\n%s'model' => %s::class,\n%s],\n",
+            $entryIndent,
+            $providerKey,
+            $innerIndent,
+            $innerIndent,
+            $modelFqn,
+            $entryIndent
+        );
+
+        return $this->insertArrayEntry($block, $entry, $indent);
+    }
+
+    private function insertArrayEntry(string $block, string $entry, string $indent): string
+    {
+        $closingPos = strrpos($block, ']');
+
+        if ($closingPos === false) {
+            return $block;
+        }
+
+        $before = rtrim(substr($block, 0, $closingPos));
+        $after = substr($block, $closingPos);
+
+        if (! str_ends_with($before, "\n")) {
+            $before .= "\n";
+        }
+
+        $before .= $entry;
+
+        if (! str_ends_with($before, "\n")) {
+            $before .= "\n";
+        }
+
+        return $before . $indent . $after;
+    }
+
+    private function updateGuardProvider(string $block, string $guardKey, string $providerKey): string
+    {
+        $pattern = sprintf(
+            "#('%s'\s*=>\s*\[\s*(?:\n|.)*?'provider'\s*=>\s*)'[^']*'#",
+            preg_quote($guardKey, '#')
+        );
+
+        return preg_replace($pattern, "$1'" . $providerKey . "'", $block, 1) ?? $block;
+    }
+
+    private function synchronizeDefaultUserProvider(string $block, string $indent, string $modelFqn): string
+    {
+        $pattern = "#('users'\\s*=>\\s*\\[\\s*(?:\\n|.)*?'model'\\s*=>\\s*)[^,]+,#";
+        $replacement = "$1env('AUTH_MODEL', " . $modelFqn . "::class),";
+
+        $updated = preg_replace($pattern, $replacement, $block, 1);
+
+        return $updated !== null ? $updated : $block;
+    }
+
+    private function removeLegacyAuthRoutes(string $contents, string $controllersNamespace): string
+    {
+        $legacyUse = sprintf("use %s\\\\Auth\\\\AuthController;\n", trim($controllersNamespace, '\\'));
+        $contents = str_replace($legacyUse, '', $contents);
+
+        $contents = preg_replace_callback(
+            "#\nRoute::prefix\('auth'\)->group\(function \(\): void \{\n(?:(?:    ).+\n)*?\}\);\n#s",
+            static function (array $matches): string {
+                return str_contains($matches[0], 'AuthController::class') ? "\n" : $matches[0];
+            },
+            $contents
+        ) ?? $contents;
+
+        return $contents;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $contexts
+     */
+    private function buildAuthRouteBlock(array $contexts): string
+    {
+        $lines = ["", "Route::prefix('auth')->group(function (): void {"];
+
+        foreach ($contexts as $context) {
+            $lines[] = $this->buildAuthRouteGroup($context);
+        }
+
+        $lines[] = "});";
+
+        return implode("\n", $lines);
+    }
+
+    private function buildAuthRouteGroup(array $context): string
+    {
+        $indent = '    ';
+        $controllerClass = $context['controller']['class'];
+        $prefix = $context['key'];
+        $guard = $context['guard'];
+        $middlewares = [];
+
+        if ($context['tenant_aware']) {
+            $middlewares[] = "'tenancy'";
+        }
+
+        $middlewareSuffix = $middlewares !== []
+            ? '->middleware([' . implode(', ', $middlewares) . '])'
+            : '';
+
+        $group = [];
+        $group[] = sprintf("%sRoute::prefix('%s')%s->group(function (): void {", $indent, $prefix, $middlewareSuffix);
+        $group[] = sprintf("%s    Route::post('login', [%s::class, 'login']);", $indent, $controllerClass);
+        $group[] = sprintf("%s    Route::middleware(['auth:%s'])->group(function (): void {", $indent, $guard);
+        $group[] = sprintf("%s        Route::post('logout', [%s::class, 'logout']);", $indent, $controllerClass);
+        $group[] = sprintf("%s        Route::get('me', [%s::class, 'me']);", $indent, $controllerClass);
+        $group[] = sprintf("%s    });", $indent);
+        $group[] = sprintf("%s});", $indent);
+
+        return implode("\n", $group);
+    }
+
     /**
      * @return array<int, array<string, string>>
      */
-    private function prepareRegisterValidationRules(?array $model): array
+    private function prepareRegisterValidationRules(?array $model, array $context): array
     {
-        $ruleMap = $this->deriveRegisterRuleMap($model);
+        $ruleMap = $this->deriveRegisterRuleMap($model, $context);
 
         if ($ruleMap === []) {
             return [];
@@ -262,13 +719,10 @@ class AuthScaffoldingCreator
     /**
      * @return array<string, array<int, string>>
      */
-    private function deriveRegisterRuleMap(?array $model): array
+    private function deriveRegisterRuleMap(?array $model, array $context): array
     {
         if ($model === null) {
-            $defaults = $this->defaultRegisterRuleMap();
-            $defaults['device_name'] = self::DEFAULT_DEVICE_NAME_RULES;
-
-            return $defaults;
+            return $this->defaultRegisterRuleMap($context);
         }
 
         $rules = [];
@@ -310,7 +764,7 @@ class AuthScaffoldingCreator
             }
         }
 
-        foreach ($this->defaultRegisterRuleMap() as $field => $parts) {
+        foreach ($this->defaultRegisterRuleMap($context) as $field => $parts) {
             if (! array_key_exists($field, $rules)) {
                 $rules[$field] = $parts;
                 $order[] = $field;
@@ -328,6 +782,11 @@ class AuthScaffoldingCreator
             $rules['password'] = $this->uniqueRules($rules['password']);
         }
 
+        if (($context['tenancy_mode'] ?? 'central') === 'tenant' && ! array_key_exists('tenant_id', $rules)) {
+            $rules['tenant_id'] = ['nullable', 'uuid'];
+            $order[] = 'tenant_id';
+        }
+
         $ordered = [];
 
         foreach (array_unique($order) as $field) {
@@ -340,19 +799,20 @@ class AuthScaffoldingCreator
     /**
      * @return array<string, array<int, string>>
      */
-    private function defaultRegisterRuleMap(): array
+    private function defaultRegisterRuleMap(array $context): array
     {
-        return [
-            'tenant_id' => ['required', 'uuid', 'exists:tenants,id'],
+        $defaults = [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:120', 'unique:users,email'],
+            'email' => ['required', 'email', 'max:190'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
-            'full_name' => ['required', 'string', 'max:120'],
-            'role' => ['nullable', 'string'],
-            'locale' => ['nullable', 'string'],
-            'timezone' => ['nullable', 'string'],
-            'is_active' => ['sometimes', 'boolean'],
+            'device_name' => self::DEFAULT_DEVICE_NAME_RULES,
         ];
+
+        if (($context['tenancy_mode'] ?? 'central') === 'tenant') {
+            $defaults['tenant_id'] = ['nullable', 'uuid'];
+        }
+
+        return $defaults;
     }
 
     private function inferRulesFromFieldDefinition(array $definition): array
@@ -417,16 +877,16 @@ class AuthScaffoldingCreator
     /**
      * @return array{attributes: array<int, string>, relationships: array<int, array<string, string>>, imports: array<int, string>}
      */
-    private function prepareUserResourceContext(?array $model, string $resourceNamespace): array
+    private function prepareUserResourceContext(?array $model, string $resourceNamespace, array $context): array
     {
         if ($model === null) {
-            return $this->defaultUserResourceContext($resourceNamespace);
+            return $this->defaultUserResourceContext($resourceNamespace, $context);
         }
 
         $attributes = $this->buildResourceAttributesFromModel($model);
         $relationships = $this->buildResourceRelationshipsFromModel($model, $resourceNamespace);
 
-        $fallback = $this->defaultUserResourceContext($resourceNamespace);
+        $fallback = $this->defaultUserResourceContext($resourceNamespace, $context);
 
         if ($attributes === []) {
             $attributes = $fallback['attributes'];
@@ -449,33 +909,42 @@ class AuthScaffoldingCreator
     /**
      * @return array{attributes: array<int, string>, relationships: array<int, array<string, string>>, imports: array<int, string>}
      */
-    private function defaultUserResourceContext(string $resourceNamespace): array
+    private function defaultUserResourceContext(string $resourceNamespace, array $context): array
     {
         $tenantResourceFqn = $this->appendNamespace($resourceNamespace, 'TenantResource');
 
+        $attributes = [
+            'id',
+            'name',
+            'email',
+            'status',
+            'locale',
+            'timezone',
+            'last_login_at',
+            'created_at',
+            'updated_at',
+        ];
+
+        if (($context['tenancy_mode'] ?? 'central') === 'tenant') {
+            array_splice($attributes, 1, 0, ['tenant_id']);
+            $attributes[] = 'phone';
+        }
+
+        $relationships = [];
+        $imports = [];
+
+        if (($context['tenancy_mode'] ?? 'central') === 'tenant') {
+            $relationships[] = [
+                'property' => 'tenant',
+                'expression' => 'TenantResource::make($this->whenLoaded(\'tenant\'))',
+            ];
+            $imports[] = $tenantResourceFqn;
+        }
+
         return [
-            'attributes' => [
-                'id',
-                'tenant_id',
-                'name',
-                'email',
-                'password',
-                'full_name',
-                'role',
-                'locale',
-                'timezone',
-                'is_active',
-                'last_login_at',
-                'created_at',
-                'updated_at',
-            ],
-            'relationships' => [
-                [
-                    'property' => 'tenant',
-                    'expression' => 'TenantResource::make($this->whenLoaded(\'tenant\'))',
-                ],
-            ],
-            'imports' => [$tenantResourceFqn],
+            'attributes' => array_values(array_unique($attributes)),
+            'relationships' => $relationships,
+            'imports' => array_values(array_unique($imports)),
         ];
     }
 
@@ -496,6 +965,10 @@ class AuthScaffoldingCreator
                 $name = $definition['name'] ?? null;
 
                 if (is_string($name) && $name !== '') {
+                    if (in_array($name, ['password', 'remember_token'], true)) {
+                        continue;
+                    }
+
                     $attributes[] = $name;
                 }
             }
@@ -859,6 +1332,28 @@ class AuthScaffoldingCreator
 
         if ($this->files->put($path, $contents) !== false) {
             $this->recordWrittenFile($path, $contents, $previous);
+        }
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $contexts
+     */
+    private function ensurePersonalAccessTokensMigrationForContexts(array $contexts, bool $force, bool $dryRun): void
+    {
+        foreach ($contexts as $context) {
+            $model = $context['model'] ?? null;
+
+            if (! is_array($model)) {
+                continue;
+            }
+
+            if (! $this->authModelUsesUuidPrimaryKey($model)) {
+                continue;
+            }
+
+            $this->ensurePersonalAccessTokensMigration($model, $force, $dryRun);
+
+            return;
         }
     }
 
