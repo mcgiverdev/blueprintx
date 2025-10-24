@@ -98,6 +98,8 @@ class DatabaseLayerGenerator implements LayerGenerator
                 } else {
                     $result->addWarning(sprintf('No se encontró la plantilla "%s" para la capa database en "%s".', $template, $driver->name()));
                 }
+            } else {
+                $this->cleanupReservedAlterArtifacts($blueprint, $options, $this->currentMigrationsRoot);
             }
 
             if ($this->templates->exists($factoryTemplate)) {
@@ -720,7 +722,9 @@ class DatabaseLayerGenerator implements LayerGenerator
             $recorded = [];
         }
 
-        $registered = array_unique(array_merge($baseline, $recorded));
+        $shared = $this->reservedSharedState($blueprint);
+
+        $registered = array_unique(array_merge($baseline, $shared['fields'], $recorded));
 
         $fields = [];
 
@@ -732,19 +736,26 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
 
             $lower = Str::lower($name);
-
             if (in_array($lower, $registered, true)) {
                 continue;
             }
 
+            $relation = $relationsByField[$name] ?? null;
+
+            if ($this->shouldForceNullableForField($blueprint, $field, $relation)) {
+                $fieldData = $field->toArray();
+                $fieldData['nullable'] = true;
+                $field = Field::fromArray($fieldData);
+            }
+
             $fields[] = [
                 'field' => $field,
-                'relation' => $relationsByField[$name] ?? null,
+                'relation' => $relation,
             ];
         }
 
         $softDeletesRequested = $this->reservedWantsSoftDeletes($blueprint);
-        $softDeletesRecorded = $this->interpretBoolean($entry['reserved_soft_deletes'] ?? null);
+        $softDeletesRecorded = $this->interpretBoolean($entry['reserved_soft_deletes'] ?? null) || $shared['soft_deletes'];
 
         return [
             'fields' => $fields,
@@ -765,7 +776,10 @@ class DatabaseLayerGenerator implements LayerGenerator
         $configured = self::RESERVED_TABLE_BASELINES[$table]['fields'] ?? [];
         $baseline = array_merge($baseline, $this->collectFieldList($configured));
 
-        $baseline = array_merge($baseline, $this->reservedBaselineFromBlueprint($blueprint));
+    $baseline = array_merge($baseline, $this->reservedBaselineFromBlueprint($blueprint));
+
+    $shared = $this->reservedSharedState($blueprint);
+    $baseline = array_merge($baseline, $shared['fields']);
 
         $historyBaseline = [];
 
@@ -871,6 +885,96 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         return array_values(array_unique($fields));
+    }
+
+    /**
+     * @return array{fields: array<int, string>, soft_deletes: bool}
+     */
+    private function reservedSharedState(Blueprint $blueprint): array
+    {
+        $history = $this->loadHistory();
+        $table = Str::lower($this->tableName($blueprint));
+        $moduleKey = $this->moduleKey($blueprint);
+
+        $fields = [];
+        $softDeletes = false;
+
+        $migrations = $history['migrations'] ?? null;
+
+        if (! is_array($migrations)) {
+            return [
+                'fields' => [],
+                'soft_deletes' => false,
+            ];
+        }
+
+        foreach ($migrations as $key => $entry) {
+            if (! is_string($key) || ! is_array($entry)) {
+                continue;
+            }
+
+            [$entryModule, $entryTable] = array_pad(explode(':', $key, 2), 2, null);
+
+            if ($entryTable === null || $entryTable === '' || $entryTable !== $table) {
+                continue;
+            }
+
+            if ($entryModule === $moduleKey) {
+                continue;
+            }
+
+            $fields = array_merge(
+                $fields,
+                $this->collectFieldList($entry['reserved_fields'] ?? []),
+                $this->collectFieldList($entry['reserved_baseline'] ?? [])
+            );
+
+            if (isset($entry['reserved_alters']) && is_array($entry['reserved_alters'])) {
+                foreach ($entry['reserved_alters'] as $alter) {
+                    if (! is_array($alter)) {
+                        continue;
+                    }
+
+                    $fields = array_merge($fields, $this->collectFieldList($alter['fields'] ?? []));
+
+                    if (($alter['soft_deletes'] ?? false) === true) {
+                        $softDeletes = true;
+                    }
+                }
+            }
+
+            if ($this->interpretBoolean($entry['reserved_soft_deletes'] ?? null)) {
+                $softDeletes = true;
+            }
+        }
+
+        $fields = array_values(array_unique($fields));
+
+        return [
+            'fields' => $fields,
+            'soft_deletes' => $softDeletes,
+        ];
+    }
+
+    private function shouldForceNullableForField(Blueprint $blueprint, Field $field, ?array $relation): bool
+    {
+        if ($field->nullable === true) {
+            return false;
+        }
+
+        if (Str::lower($this->tableName($blueprint)) !== 'users') {
+            return false;
+        }
+
+        if (Str::lower($field->name) !== 'tenant_id') {
+            return false;
+        }
+
+        if ($relation === null || Str::lower((string) ($relation['type'] ?? '')) !== 'belongsto') {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -1183,6 +1287,50 @@ class DatabaseLayerGenerator implements LayerGenerator
         ];
 
         $history['migrations'][$key]['reserved_alters'] = $alters;
+
+        $this->history = $history;
+        $this->persistHistory();
+    }
+
+    private function cleanupReservedAlterArtifacts(Blueprint $blueprint, array $options, ?string $migrationsRootOverride = null): void
+    {
+        $history = $this->loadHistory();
+        $key = $this->historyKey($blueprint);
+
+        if (! isset($history['migrations'][$key]) || ! is_array($history['migrations'][$key])) {
+            return;
+        }
+
+        $entry = $history['migrations'][$key];
+
+        if (! isset($entry['reserved_alters']) || ! is_array($entry['reserved_alters']) || $entry['reserved_alters'] === []) {
+            return;
+        }
+
+        $migrationsRoot = $migrationsRootOverride ?? $this->resolveMigrationsRoot($blueprint, $options);
+        $migrationsRoot = rtrim(str_replace('\\', '/', $migrationsRoot), '/');
+        $table = $this->tableName($blueprint);
+
+        foreach ($entry['reserved_alters'] as $alter) {
+            if (! is_array($alter)) {
+                continue;
+            }
+
+            $prefix = $alter['prefix'] ?? null;
+
+            if (! is_string($prefix) || $prefix === '') {
+                continue;
+            }
+
+            $path = sprintf('%s/%s_alter_%s_table.php', $migrationsRoot, $prefix, $table);
+
+            if (file_exists($path)) {
+                @unlink($path);
+            }
+        }
+
+        unset($history['migrations'][$key]['reserved_alters']);
+        unset($history['migrations'][$key]['reserved_soft_deletes']);
 
         $this->history = $history;
         $this->persistHistory();
@@ -1759,9 +1907,21 @@ class DatabaseLayerGenerator implements LayerGenerator
 
     private function moduleKey(Blueprint $blueprint): string
     {
-        $module = $blueprint->module();
+        $module = $this->moduleSegment($blueprint);
 
-        return $module !== null && $module !== '' ? Str::lower($module) : '_';
+        if ($module === null || $module === '') {
+            $raw = $blueprint->module();
+
+            if ($raw === null || $raw === '') {
+                return '_';
+            }
+
+            $normalized = str_replace(['/', '\\'], '\\', $raw);
+
+            return Str::lower($normalized);
+        }
+
+        return Str::lower(str_replace('/', '\\', $module));
     }
 
     private function buildModuleSeederContext(Blueprint $blueprint): ?array
