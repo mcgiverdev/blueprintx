@@ -68,7 +68,7 @@ class DatabaseLayerGenerator implements LayerGenerator
             $reservedAlter = null;
 
             if ($reservedMigration) {
-                $this->applyReservedBaseMigrationAdjustments($blueprint, $paths['migration'] ?? null);
+                $this->applyReservedBaseMigrationAdjustments($blueprint, $paths['migration'] ?? null, $relationsByField);
                 $reservedAlter = $this->buildReservedAlterMigration($blueprint, $relationsByField);
             }
 
@@ -636,11 +636,19 @@ class DatabaseLayerGenerator implements LayerGenerator
         ];
     }
 
-    private function applyReservedBaseMigrationAdjustments(Blueprint $blueprint, ?string $migrationPath): void
+    private function applyReservedBaseMigrationAdjustments(Blueprint $blueprint, ?string $migrationPath, array $relationsByField): void
     {
         if ($migrationPath === null || ! file_exists($migrationPath)) {
             return;
         }
+
+        $contents = file_get_contents($migrationPath);
+
+        if ($contents === false) {
+            return;
+        }
+
+        $modified = false;
 
         $idField = null;
 
@@ -651,41 +659,122 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
         }
 
-        if ($idField === null) {
+        if ($idField !== null) {
+            $type = Str::lower((string) ($idField->type ?? ''));
+
+            if (in_array($type, ['uuid', 'ulid'], true)) {
+                $needle = $type === 'ulid' ? "->ulid('id')" : "->uuid('id')";
+
+                if (! str_contains($contents, $needle)) {
+                    $replacement = $type === 'ulid'
+                        ? "\$table->ulid('id')->primary();"
+                        : "\$table->uuid('id')->primary();";
+
+                    $updated = preg_replace('/\\$table->id\(\);/', $replacement, $contents, 1, $replacements);
+
+                    if ($updated !== null && $replacements > 0) {
+                        $updated = str_replace(
+                            "\$table->foreignId('user_id')->nullable()->index();",
+                            "\$table->foreignUuid('user_id')->nullable()->index();",
+                            $updated
+                        );
+
+                        $contents = $updated;
+                        $modified = true;
+                    }
+                }
+            }
+        }
+
+        if (Str::lower($this->tableName($blueprint)) !== 'users') {
+            if ($modified) {
+                file_put_contents($migrationPath, $contents);
+            }
+
             return;
         }
 
-        $type = Str::lower((string) ($idField->type ?? ''));
+        $missingColumns = [];
+        $skipFields = array_merge(
+            ['id', 'created_at', 'updated_at', 'deleted_at'],
+            $this->collectFieldList(self::RESERVED_TABLE_BASELINES['users']['fields'] ?? [])
+        );
 
-        if (! in_array($type, ['uuid', 'ulid'], true)) {
+        foreach ($blueprint->fields() as $field) {
+            $name = $field->name;
+
+            if (! is_string($name) || $name === '') {
+                continue;
+            }
+
+            $lower = Str::lower($name);
+
+            if (in_array($lower, $skipFields, true)) {
+                continue;
+            }
+
+            if (preg_match('/\$table->[^;]*\(\s*\'' . preg_quote($name, '/') . '\'/i', $contents)) {
+                continue;
+            }
+
+            $relation = $relationsByField[$name] ?? null;
+            $definition = $this->buildColumnDefinition($field, $relation);
+
+            if ($definition !== '') {
+                $missingColumns[] = $definition;
+            }
+        }
+
+        $needsSoftDeletes = ($blueprint->options()['softDeletes'] ?? false) === true
+            && ! str_contains($contents, '->softDeletes(');
+
+        if ($missingColumns === [] && ! $needsSoftDeletes) {
+            if ($modified) {
+                file_put_contents($migrationPath, $contents);
+            }
+
             return;
         }
 
-        $contents = file_get_contents($migrationPath);
+        if (! preg_match('/^(\s*)(\$table->timestamps\(\);)/m', $contents, $match)) {
+            if ($modified) {
+                file_put_contents($migrationPath, $contents);
+            }
 
-        if ($contents === false) {
             return;
         }
 
-        $needle = $type === 'ulid' ? "->ulid('id')" : "->uuid('id')";
+        $indent = $match[1];
+        $timestampLine = $match[2];
 
-        if (str_contains($contents, $needle)) {
+        $insertion = '';
+
+        foreach ($missingColumns as $definition) {
+            $insertion .= $indent . $definition . PHP_EOL;
+        }
+
+        if ($needsSoftDeletes) {
+            $insertion .= $indent . '$table->softDeletes();' . PHP_EOL;
+        }
+
+    $pattern = '/^(\s*\$table->timestamps\(\);)/m';
+        $replacement = $insertion . '$1';
+        $updated = preg_replace($pattern, $replacement, $contents, 1);
+
+        if ($updated === null) {
+            if ($modified) {
+                file_put_contents($migrationPath, $contents);
+            }
+
             return;
         }
 
-        $replacement = $type === 'ulid'
-            ? "\$table->ulid('id')->primary();"
-            : "\$table->uuid('id')->primary();";
+        $contents = $updated;
+        $modified = true;
 
-        $updated = preg_replace('/\\$table->id\(\);/', $replacement, $contents, 1, $replacements);
-
-        if ($updated === null || $replacements === 0) {
-            return;
+        if ($modified) {
+            file_put_contents($migrationPath, $contents);
         }
-
-        $updated = str_replace("\$table->foreignId('user_id')->nullable()->index();", "\$table->foreignUuid('user_id')->nullable()->index();", $updated);
-
-        file_put_contents($migrationPath, $updated);
     }
 
     /**
@@ -718,7 +807,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         if ($appliedFields !== []) {
             $recorded = array_values(array_intersect($recorded, $appliedFields));
-        } elseif (isset($entry['reserved_alters'])) {
+        } else {
             $recorded = [];
         }
 
@@ -801,7 +890,7 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         if ($appliedFields !== []) {
             $historyBaseline = array_values(array_intersect($historyBaseline, $appliedFields));
-        } elseif (isset($historyEntry['reserved_alters'])) {
+        } else {
             $historyBaseline = [];
         }
 
@@ -923,6 +1012,13 @@ class DatabaseLayerGenerator implements LayerGenerator
                 continue;
             }
 
+            $currentMode = $this->normalizeTenancyMode($this->tenancyMode($blueprint));
+            $entryMode = $this->normalizeTenancyMode($entry['tenancy_mode'] ?? $this->inferTenancyModeFromModuleKey($entryModule));
+
+            if ($entryMode !== $currentMode) {
+                continue;
+            }
+
             $fields = array_merge(
                 $fields,
                 $this->collectFieldList($entry['reserved_fields'] ?? []),
@@ -954,6 +1050,55 @@ class DatabaseLayerGenerator implements LayerGenerator
             'fields' => $fields,
             'soft_deletes' => $softDeletes,
         ];
+    }
+
+    private function tenancyMode(Blueprint $blueprint): ?string
+    {
+        $tenancy = $blueprint->options()['tenancy'] ?? null;
+
+        if (! is_array($tenancy)) {
+            return null;
+        }
+
+        $mode = $tenancy['mode'] ?? null;
+
+        if (! is_string($mode)) {
+            return null;
+        }
+
+        $mode = Str::lower(trim($mode));
+
+        return $mode !== '' ? $mode : null;
+    }
+
+    private function normalizeTenancyMode(mixed $mode): string
+    {
+        if (! is_string($mode)) {
+            return 'central';
+        }
+
+        $normalized = Str::lower(trim($mode));
+
+        return $normalized !== '' ? $normalized : 'central';
+    }
+
+    private function inferTenancyModeFromModuleKey(?string $moduleKey): ?string
+    {
+        if (! is_string($moduleKey)) {
+            return null;
+        }
+
+        $lower = Str::lower($moduleKey);
+
+        if (str_contains($lower, 'tenant')) {
+            return 'tenant';
+        }
+
+        if (str_contains($lower, 'central')) {
+            return 'central';
+        }
+
+        return null;
     }
 
     private function shouldForceNullableForField(Blueprint $blueprint, Field $field, ?array $relation): bool
@@ -1111,6 +1256,19 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
         }
 
+        $table = Str::lower($this->tableName($blueprint));
+        $module = Str::lower((string) $blueprint->module());
+        $tenancyOptions = $blueprint->options()['tenancy'] ?? null;
+        $tenancyMode = null;
+
+        if (is_array($tenancyOptions)) {
+            $tenancyMode = Str::lower((string) ($tenancyOptions['mode'] ?? ''));
+        }
+
+        if ($table === 'tenants' && ($tenancyMode === 'central' || str_contains($module, 'central'))) {
+            return '2019_09_15_000010';
+        }
+
         return null;
     }
 
@@ -1135,6 +1293,19 @@ class DatabaseLayerGenerator implements LayerGenerator
             if ($prefix !== null) {
                 return $prefix;
             }
+        }
+
+        $table = Str::lower($this->tableName($blueprint));
+        $module = Str::lower((string) $blueprint->module());
+        $tenancyOptions = $blueprint->options()['tenancy'] ?? null;
+        $tenancyMode = null;
+
+        if (is_array($tenancyOptions)) {
+            $tenancyMode = Str::lower((string) ($tenancyOptions['mode'] ?? ''));
+        }
+
+        if ($table === 'tenants' && ($tenancyMode === 'central' || str_contains($module, 'central'))) {
+            return '2019_09_15_000010';
         }
 
         return null;
@@ -1733,22 +1904,13 @@ class DatabaseLayerGenerator implements LayerGenerator
             'entity' => $blueprint->entity(),
             'module' => $blueprint->module(),
             'reserved' => $this->shouldReserveMigration($blueprint, $existing),
+            'tenancy_mode' => $this->tenancyMode($blueprint),
         ]);
 
         if (($history['migrations'][$key]['reserved'] ?? false) === true) {
-            $baseline = [];
+            $entry = $history['migrations'][$key];
 
-            if (isset($history['migrations'][$key]['reserved_baseline']) && is_array($history['migrations'][$key]['reserved_baseline'])) {
-                foreach ($history['migrations'][$key]['reserved_baseline'] as $field) {
-                    if (! is_string($field) || $field === '') {
-                        continue;
-                    }
-
-                    $baseline[] = Str::lower($field);
-                }
-            }
-
-            $baseline = array_merge($baseline, $this->reservedBaselineFields($blueprint, []));
+            $baseline = $this->reservedBaselineFields($blueprint, $entry);
 
             if ($baseline === []) {
                 foreach ($blueprint->fields() as $field) {
@@ -1764,9 +1926,27 @@ class DatabaseLayerGenerator implements LayerGenerator
 
             $history['migrations'][$key]['reserved_baseline'] = array_values(array_unique($baseline));
 
-            if (! isset($history['migrations'][$key]['reserved_fields']) || ! is_array($history['migrations'][$key]['reserved_fields'])) {
-                $history['migrations'][$key]['reserved_fields'] = [];
+            $reservedFields = [];
+
+            if (isset($entry['reserved_fields']) && is_array($entry['reserved_fields'])) {
+                foreach ($entry['reserved_fields'] as $field) {
+                    if (! is_string($field) || $field === '') {
+                        continue;
+                    }
+
+                    $reservedFields[] = Str::lower($field);
+                }
             }
+
+            $appliedReserved = $this->reservedFieldsFromExistingAlterFiles($blueprint, $entry);
+
+            if ($appliedReserved !== []) {
+                $reservedFields = array_values(array_intersect($reservedFields, $appliedReserved));
+            } else {
+                $reservedFields = [];
+            }
+
+            $history['migrations'][$key]['reserved_fields'] = $reservedFields;
 
             if (! array_key_exists('reserved_soft_deletes', $history['migrations'][$key])) {
                 $history['migrations'][$key]['reserved_soft_deletes'] = false;
