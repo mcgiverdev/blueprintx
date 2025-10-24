@@ -1,0 +1,103 @@
+entity: Employee
+module: tenant_hr
+table: employees
+architecture: hexagonal
+fields:
+  - name: id
+    type: uuid
+  - name: tenant_id
+    type: uuid
+    rules: 'nullable|uuid'
+  - name: company_id
+    type: uuid
+    rules: 'required|uuid'
+  - name: user_id
+    type: uuid
+    rules: 'required|uuid'
+  - name: job_position_id
+    type: uuid
+    rules: 'required|uuid'
+  - name: employee_number
+    type: string
+    rules: 'required|string|max:40'
+  - name: first_name
+    type: string
+    rules: 'required|string|max:80'
+  - name: last_name
+    type: string
+    rules: 'required|string|max:80'
+  - name: email
+    type: string
+    rules: 'required|email|max:160'
+  - name: hire_date
+    type: date
+    rules: 'required|date'
+  - name: status
+    type: string
+    rules: 'required|string|in:invited,active,inactive,on_leave'
+  - name: manager_id
+    type: uuid
+    rules: 'nullable|uuid|exists:employees,id'
+  - name: created_by
+    type: uuid
+    rules: 'required|uuid|exists:users,id'
+  - name: updated_by
+    type: uuid
+    rules: 'required|uuid|exists:users,id'
+relations:
+  - type: belongsTo
+    target: Tenant
+    field: tenant_id
+  - type: belongsTo
+    target: Company
+    field: company_id
+  - type: belongsTo
+    target: User
+    field: user_id
+  - type: belongsTo
+    target: JobPosition
+    field: job_position_id
+  - type: belongsTo
+    target: Employee
+    field: manager_id
+    alias: manager
+options:
+  timestamps: true
+  audited: true
+  softDeletes: true
+api:
+  base_path: /hr/people/employees
+  middleware:
+    - tenancy
+    - auth:tenant
+    - ability:tenant.manage-employees
+  endpoints:
+    - type: crud
+    - type: search
+      fields:
+        - employee_number
+        - first_name
+        - last_name
+        - email
+        - status
+    - type: bulk
+      actions:
+        - archive
+        - restore
+docs:
+  description: >-
+    Gestión de colaboradores dentro del tenant con enlace a catálogos compartidos. Las rutas usan el guardia `tenant`
+    y requieren el token emitido tras la autenticación de cada inquilino.
+  tags:
+    - hr
+    - employees
+metadata:
+  owner: 'People Operations'
+  tags:
+    - pii
+tenancy:
+  mode: tenant
+  storage: tenant
+  connection: tenant
+  routing_scope: tenant
+  seed_scope: tenant

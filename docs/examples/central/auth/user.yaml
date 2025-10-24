@@ -1,0 +1,71 @@
+entity: User
+module: central_auth
+table: users
+architecture: hexagonal
+tenancy:
+  mode: central
+  storage: central
+  connection: central
+  routing_scope: central
+  seed_scope: central
+fields:
+  - name: id
+    type: uuid
+  - name: name
+    type: string
+    rules: 'required|string|max:120'
+  - name: email
+    type: string
+    rules: 'required|email|max:190|unique:users,email'
+  - name: password
+    type: string
+    rules: 'required|string|min:12|max:190'
+  - name: status
+    type: string
+    rules: 'required|string|in:pending,active,suspended'
+  - name: timezone
+    type: string
+    rules: 'nullable|string|max:60'
+  - name: locale
+    type: string
+    rules: 'nullable|string|size:5'
+  - name: last_login_at
+    type: datetime
+    rules: 'nullable|date'
+  - name: remember_token
+    type: string
+    rules: 'nullable|string|max:100'
+relations: []
+options:
+  timestamps: true
+  softDeletes: true
+  audited: true
+api:
+  base_path: /auth/users
+  middleware:
+    - auth:sanctum
+    - role:super-admin
+  endpoints:
+    - type: crud
+    - type: search
+      fields:
+        - name
+        - email
+        - status
+    - type: bulk
+      actions:
+        - activate
+        - suspend
+resources:
+  includes: []
+docs:
+  summary: 'Gestión central de usuarios administrativos y operadores.'
+  description: >-
+    Provee CRUD para operadores centrales que administran compañías y tenants. Incluye acciones masivas para activar o
+    suspender cuentas y expone búsquedas por nombre, correo y estado.
+metadata:
+  owner: 'Platform Ops'
+  tags:
+    - auth
+    - central
+  version: '1.0.0'

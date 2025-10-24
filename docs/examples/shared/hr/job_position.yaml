@@ -1,0 +1,62 @@
+entity: JobPosition
+module: shared_hr
+table: job_positions
+architecture: hexagonal
+fields:
+  - name: id
+    type: uuid
+  - name: company_id
+    type: uuid
+    rules: 'nullable|uuid|exists:companies,id'
+  - name: code
+    type: string
+    rules: 'required|string|max:50'
+  - name: title
+    type: string
+    rules: 'required|string|max:160'
+  - name: department
+    type: string
+    rules: 'required|string|max:120'
+  - name: seniority
+    type: string
+    rules: 'required|string|in:intern,junior,mid,senior,lead'
+  - name: description
+    type: text
+    rules: 'nullable|string'
+  - name: is_global
+    type: boolean
+    rules: 'boolean'
+relations:
+  - type: belongsTo
+    target: Company
+    field: company_id
+options:
+  timestamps: true
+  audited: true
+api:
+  base_path: /hr/catalog/job-positions
+  middleware:
+    - auth:sanctum
+  endpoints:
+    - type: crud
+    - type: search
+      fields:
+        - title
+        - department
+        - seniority
+    - type: stats
+      by: department
+docs:
+  description: 'Posiciones laborales reutilizables entre compañía central y tenants.'
+  tags:
+    - hr
+    - catalog
+metadata:
+  owner: 'HR Enablement'
+  version: '1.0.0'
+tenancy:
+  mode: shared
+  storage: both
+  connection: tenant
+  routing_scope: both
+  seed_scope: both

@@ -1,0 +1,74 @@
+entity: User
+module: tenant_auth
+table: users
+architecture: hexagonal
+tenancy:
+  mode: tenant
+  storage: tenant
+  connection: tenant
+  routing_scope: tenant
+  seed_scope: tenant
+fields:
+  - name: id
+    type: uuid
+  - name: tenant_id
+    type: uuid
+    rules: 'required|uuid'
+  - name: company_id
+    type: uuid
+    rules: 'nullable|uuid'
+  - name: name
+    type: string
+    rules: 'required|string|max:120'
+  - name: email
+    type: string
+    rules: 'required|email|max:190'
+  - name: password
+    type: string
+    rules: 'required|string|min:12|max:190'
+  - name: phone
+    type: string
+    rules: 'nullable|string|max:40'
+  - name: status
+    type: string
+    rules: 'required|string|in:invited,active,inactive,suspended'
+  - name: last_login_at
+    type: datetime
+    rules: 'nullable|date'
+relations:
+  - type: belongsTo
+    target: Tenant
+    field: tenant_id
+  - type: belongsTo
+    target: Company
+    field: company_id
+options:
+  timestamps: true
+  softDeletes: true
+  audited: true
+api:
+  base_path: /auth/tenant/users
+  middleware:
+    - tenancy
+    - auth:tenant
+    - ability:tenant.manage-users
+  endpoints:
+    - type: crud
+    - type: search
+      fields:
+        - name
+        - email
+        - status
+resources:
+  includes: []
+docs:
+  summary: 'Administración de usuarios finales dentro del tenant.'
+  description: >-
+    CRUD protegido por el guardia `tenant` para gestionar credenciales, estados y datos de contacto de los usuarios
+    internos de cada inquilino. Las reglas de negocio delimitan la visibilidad por `tenant_id`.
+metadata:
+  owner: 'Tenant Ops'
+  tags:
+    - auth
+    - tenant
+  version: '1.0.0'

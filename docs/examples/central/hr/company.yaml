@@ -1,0 +1,74 @@
+entity: Company
+module: central_hr
+table: companies
+architecture: hexagonal
+fields:
+  - name: id
+    type: uuid
+  - name: name
+    type: string
+    rules: 'required|string|max:160'
+  - name: slug
+    type: string
+    rules: 'required|string|max:160|unique:companies,slug'
+  - name: primary_domain
+    type: string
+    rules: 'required|string|max:190|unique:companies,primary_domain'
+  - name: plan
+    type: string
+    rules: 'required|string|in:starter,growth,enterprise'
+  - name: timezone
+    type: string
+    rules: 'required|string|max:60'
+  - name: locale
+    type: string
+    rules: 'required|string|size:5'
+  - name: status
+    type: string
+    rules: 'required|string|in:pending,active,suspended'
+  - name: billing_email
+    type: string
+    rules: 'required|email|max:190'
+  - name: created_by
+    type: uuid
+    rules: 'nullable|uuid|exists:users,id'
+  - name: updated_by
+    type: uuid
+    rules: 'nullable|uuid|exists:users,id'
+relations:
+  - type: belongsTo
+    target: User
+    field: created_by
+  - type: belongsTo
+    target: User
+    field: updated_by
+options:
+  timestamps: true
+  audited: true
+api:
+  base_path: /hr/setup/companies
+  middleware:
+    - auth:sanctum
+    - role:super-admin
+  endpoints:
+    - type: crud
+    - type: search
+      fields:
+        - name
+        - slug
+        - primary_domain
+        - status
+docs:
+  description: 'Catálogo central de compañías cliente.'
+  tags:
+    - hr
+    - companies
+metadata:
+  owner: 'Platform Ops'
+  version: '1.0.0'
+tenancy:
+  mode: central
+  storage: central
+  connection: central
+  routing_scope: central
+  seed_scope: central
