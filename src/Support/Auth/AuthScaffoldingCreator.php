@@ -556,6 +556,9 @@ class AuthScaffoldingCreator
     private function ensureGuardEntry(string $block, string $indent, string $guardKey, string $providerKey): string
     {
         if (str_contains($block, "'{$guardKey}' => [")) {
+            $block = $this->updateGuardDriver($block, $guardKey, 'sanctum');
+            $block = $this->updateGuardProvider($block, $guardKey, $providerKey);
+
             return $block;
         }
 
@@ -578,6 +581,9 @@ class AuthScaffoldingCreator
     private function ensureProviderEntry(string $block, string $indent, string $providerKey, string $modelFqn): string
     {
         if (str_contains($block, "'{$providerKey}' => [")) {
+            $block = $this->updateProviderDriver($block, $providerKey, 'eloquent');
+            $block = $this->updateProviderModel($block, $providerKey, $modelFqn);
+
             return $block;
         }
 
@@ -624,19 +630,53 @@ class AuthScaffoldingCreator
     private function updateGuardProvider(string $block, string $guardKey, string $providerKey): string
     {
         $pattern = sprintf(
-            "#('%s'\s*=>\s*\[\s*(?:\n|.)*?'provider'\s*=>\s*)'[^']*'#",
+            "#('%s'\\s*=>\\s*\\[[\\s\\S]*?'provider'\\s*=>\\s*)'[^']*'#",
             preg_quote($guardKey, '#')
         );
 
         return preg_replace($pattern, "$1'" . $providerKey . "'", $block, 1) ?? $block;
     }
 
+    private function updateGuardDriver(string $block, string $guardKey, string $driver): string
+    {
+        $pattern = sprintf(
+            "#('%s'\\s*=>\\s*\\[[\\s\\S]*?'driver'\\s*=>\\s*)'[^']*'#",
+            preg_quote($guardKey, '#')
+        );
+
+        return preg_replace($pattern, "$1'" . $driver . "'", $block, 1) ?? $block;
+    }
+
     private function synchronizeDefaultUserProvider(string $block, string $indent, string $modelFqn): string
     {
-    $pattern = "#('users'\\s*=>\\s*\\[[\\s\\S]*?'model'\\s*=>\\s*)(.+?)(\\r?\\n)#";
-    $replacement = "$1env('AUTH_MODEL', %s::class),$3";
+        $pattern = "#('users'\\s*=>\\s*\\[[\\s\\S]*?'model'\\s*=>\\s*)(.+?)(\\r?\\n)#";
+        $replacement = "$1env('AUTH_MODEL', %s::class),$3";
 
-    $updated = preg_replace($pattern, sprintf($replacement, $modelFqn), $block, 1);
+        $updated = preg_replace($pattern, sprintf($replacement, $modelFqn), $block, 1);
+
+        return $updated !== null ? $updated : $block;
+    }
+
+    private function updateProviderDriver(string $block, string $providerKey, string $driver): string
+    {
+        $pattern = sprintf(
+            "#('%s'\\s*=>\\s*\\[[\\s\\S]*?'driver'\\s*=>\\s*)'[^']*'#",
+            preg_quote($providerKey, '#')
+        );
+
+        return preg_replace($pattern, "$1'" . $driver . "'", $block, 1) ?? $block;
+    }
+
+    private function updateProviderModel(string $block, string $providerKey, string $modelFqn): string
+    {
+        $pattern = sprintf(
+            "#('%s'\\s*=>\\s*\\[[\\s\\S]*?'model'\\s*=>\\s*)(.+?)(,|\\r?\\n)#",
+            preg_quote($providerKey, '#')
+        );
+
+        $replacement = "$1" . $modelFqn . "::class$3";
+
+        $updated = preg_replace($pattern, $replacement, $block, 1);
 
         return $updated !== null ? $updated : $block;
     }

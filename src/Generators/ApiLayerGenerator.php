@@ -15,6 +15,9 @@ use Illuminate\Support\Str;
 
 class ApiLayerGenerator implements LayerGenerator
 {
+    private const ROLE_MIDDLEWARE_NAME = 'role';
+    private const ROLE_MIDDLEWARE_PROVIDER_FQN = 'App\\Providers\\BlueprintXAuthServiceProvider';
+
     private array $formRequestConfig;
 
     private array $resourceConfig;
@@ -22,6 +25,10 @@ class ApiLayerGenerator implements LayerGenerator
     private array $controllerTraits;
 
     private array $optimisticLocking;
+
+    private bool $roleMiddlewareDetected = false;
+
+    private bool $roleMiddlewareEnsured = false;
 
     public function __construct(private readonly TemplateEngine $templates, array $formRequestConfig = [], array $resourceConfig = [], array $controllerTraits = [], array $optimisticLocking = [])
     {
@@ -41,6 +48,8 @@ class ApiLayerGenerator implements LayerGenerator
      */
     public function generate(Blueprint $blueprint, ArchitectureDriver $driver, array $options = []): GenerationResult
     {
+        $this->roleMiddlewareDetected = false;
+
         $result = new GenerationResult();
 
         $controllerTemplate = sprintf('@%s/api/controller.stub.twig', $driver->name());
@@ -129,6 +138,14 @@ class ApiLayerGenerator implements LayerGenerator
 
         if ($routeFile !== null) {
             $result->addFile($routeFile);
+        }
+
+        if ($this->roleMiddlewareDetected && ! $this->roleMiddlewareEnsured) {
+            foreach ($this->ensureRoleMiddlewareArtifacts() as $artifact) {
+                $result->addFile($artifact);
+            }
+
+            $this->roleMiddlewareEnsured = true;
         }
 
         return $result;
@@ -1397,6 +1414,229 @@ class ApiLayerGenerator implements LayerGenerator
     }
 
     /**
+     * @return array<int, GeneratedFile>
+     */
+    private function ensureRoleMiddlewareArtifacts(): array
+    {
+        $artifacts = [];
+
+        $middlewareRelative = 'app/Http/Middleware/EnsureUserHasRole.php';
+        $middlewarePath = $this->resolveRoutesFilePath($middlewareRelative);
+        $middlewareContents = ($middlewarePath !== null && is_file($middlewarePath)) ? @file_get_contents($middlewarePath) : false;
+        $middlewareSource = is_string($middlewareContents) ? $middlewareContents : null;
+
+        if ($middlewareSource === null || ! str_contains($middlewareSource, 'EnsureUserHasRole')) {
+            $artifacts[] = new GeneratedFile($middlewareRelative, $this->roleMiddlewareStub(), $middlewareSource !== null);
+        }
+
+        $providerRelative = 'app/Providers/BlueprintXAuthServiceProvider.php';
+        $providerPath = $this->resolveRoutesFilePath($providerRelative);
+        $providerContents = ($providerPath !== null && is_file($providerPath)) ? @file_get_contents($providerPath) : false;
+        $providerSource = is_string($providerContents) ? $providerContents : null;
+
+        if ($providerSource === null || ! str_contains($providerSource, 'BlueprintXAuthServiceProvider')) {
+            $artifacts[] = new GeneratedFile($providerRelative, $this->roleMiddlewareProviderStub(), $providerSource !== null);
+        }
+
+        $providersConfigRelative = 'bootstrap/providers.php';
+        $providersConfigPath = $this->resolveRoutesFilePath($providersConfigRelative);
+
+        if ($providersConfigPath !== null && is_file($providersConfigPath)) {
+            $providersOriginal = @file_get_contents($providersConfigPath);
+            $providersOriginal = is_string($providersOriginal) ? $providersOriginal : '';
+
+            $providersUpdated = $this->appendRoleProviderRegistration($providersOriginal);
+
+            if ($providersUpdated !== null) {
+                $artifacts[] = new GeneratedFile($providersConfigRelative, $providersUpdated, true);
+            }
+        }
+
+        return $artifacts;
+    }
+
+    private function roleMiddlewareStub(): string
+    {
+        return <<<'PHP'
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
+use Symfony\Component\HttpFoundation\Response;
+
+class EnsureUserHasRole
+{
+    public function handle(Request $request, Closure $next, string ...$roles): Response
+    {
+        $user = $request->user();
+
+        if ($user === null) {
+            abort(Response::HTTP_UNAUTHORIZED);
+        }
+
+        $required = $this->normalizeRoles($roles);
+
+        if ($required === []) {
+            return $next($request);
+        }
+
+        if ($this->userHasRequiredRole($user, $required)) {
+            return $next($request);
+        }
+
+        abort(Response::HTTP_FORBIDDEN, 'Forbidden.');
+    }
+
+    /**
+     * @param array<int, string> $roles
+     * @return array<int, string>
+     */
+    private function normalizeRoles(array $roles): array
+    {
+        $normalized = [];
+
+        foreach ($roles as $chunk) {
+            $parts = preg_split('/(?:,|\|)+/', $chunk) ?: [];
+
+            foreach ($parts as $part) {
+                $role = trim($part);
+
+                if ($role !== '' && ! in_array($role, $normalized, true)) {
+                    $normalized[] = $role;
+                }
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<int, string> $required
+     */
+    private function userHasRequiredRole(object $user, array $required): bool
+    {
+        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole($required)) {
+            return true;
+        }
+
+        if (method_exists($user, 'hasRole')) {
+            foreach ($required as $role) {
+                if ($user->hasRole($role)) {
+                    return true;
+                }
+            }
+        }
+
+        if (property_exists($user, 'role') && in_array((string) $user->role, $required, true)) {
+            return true;
+        }
+
+        if (property_exists($user, 'roles')) {
+            $roles = $user->roles;
+
+            if (is_iterable($roles)) {
+                foreach ($roles as $candidate) {
+                    if (is_string($candidate) && in_array($candidate, $required, true)) {
+                        return true;
+                    }
+
+                    if (is_object($candidate) && property_exists($candidate, 'name') && in_array((string) $candidate->name, $required, true)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        $token = method_exists($user, 'currentAccessToken') ? $user->currentAccessToken() : null;
+
+        if ($token !== null) {
+            $abilities = is_array($token->abilities ?? null) ? $token->abilities : [];
+
+            if (in_array('*', $abilities, true)) {
+                return true;
+            }
+
+            foreach ($required as $role) {
+                if (in_array($role, $abilities, true) || in_array('role:' . $role, $abilities, true)) {
+                    return true;
+                }
+            }
+        }
+
+        foreach ($required as $role) {
+            if (Gate::has('role:' . $role) && Gate::allows('role:' . $role)) {
+                return true;
+            }
+
+            if (Gate::has($role) && Gate::allows($role)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+PHP;
+    }
+
+    private function roleMiddlewareProviderStub(): string
+    {
+        return <<<'PHP'
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Routing\Router;
+use Illuminate\Support\ServiceProvider;
+
+class BlueprintXAuthServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        $router = $this->app->make(Router::class);
+        $router->aliasMiddleware('role', \App\Http\Middleware\EnsureUserHasRole::class);
+    }
+}
+
+PHP;
+    }
+
+    private function appendRoleProviderRegistration(string $contents): ?string
+    {
+        if (str_contains($contents, self::ROLE_MIDDLEWARE_PROVIDER_FQN . '::class')) {
+            return null;
+        }
+
+        $pattern = '/(\r?\n)(\s*)\];\s*$/';
+
+        $updated = preg_replace_callback(
+            $pattern,
+            function (array $matches) {
+                if (count($matches) < 3) {
+                    return $matches[0];
+                }
+
+                $lineEnding = $matches[1];
+                $indent = $matches[2] !== '' ? $matches[2] : '    ';
+
+                return $lineEnding . $indent . self::ROLE_MIDDLEWARE_PROVIDER_FQN . '::class,' . $matches[0];
+            },
+            $contents,
+            1
+        );
+
+        if (! is_string($updated) || $updated === $contents) {
+            return null;
+        }
+
+        return $updated;
+    }
+
+    /**
      * @param array<int, mixed> $middleware
      * @return array<int, string>
      */
@@ -1413,6 +1653,10 @@ class ApiLayerGenerator implements LayerGenerator
 
             if ($value === '') {
                 continue;
+            }
+
+            if ($value === self::ROLE_MIDDLEWARE_NAME || str_starts_with($value, self::ROLE_MIDDLEWARE_NAME . ':')) {
+                $this->roleMiddlewareDetected = true;
             }
 
             if (! in_array($value, $normalized, true)) {
