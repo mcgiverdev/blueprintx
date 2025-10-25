@@ -80,8 +80,8 @@ class TestsLayerGenerator implements LayerGenerator
 
         $payloads = $this->prepareFieldPayloads($blueprint, $relations);
         $payloads['tenant_schema'] = $this->buildTenantSchemaDefinition($blueprint, $relationMap);
-    $payloads['tenant_schema_dependencies'] = $this->resolveTenantSchemaDependencies($blueprint, $relations, $relationMap);
-    $payloads['auth'] = $this->buildAuthenticationContext($blueprint);
+        $payloads['tenant_schema_dependencies'] = $this->resolveTenantSchemaDependencies($blueprint, $relations, $relationMap);
+        $payloads['auth'] = $this->buildAuthenticationContext($blueprint, $options);
 
         $naming = $this->namingContext($blueprint);
         $optimisticLocking = $this->buildOptimisticLockingContext($blueprint);
@@ -142,7 +142,7 @@ class TestsLayerGenerator implements LayerGenerator
         ];
     }
 
-    private function buildAuthenticationContext(Blueprint $blueprint): array
+    private function buildAuthenticationContext(Blueprint $blueprint, array $options): array
     {
         $api = $blueprint->toArray()['api'] ?? [];
         $middleware = $api['middleware'] ?? [];
@@ -211,6 +211,28 @@ class TestsLayerGenerator implements LayerGenerator
             ];
         }
 
+        $roleAbilities = array_values(array_unique($roleAbilities));
+        $abilityAbilities = array_values(array_unique($abilityAbilities));
+
+        $securityOptions = is_array($options['security'] ?? null) ? $options['security'] : [];
+        $rolesConfig = is_array($securityOptions['roles'] ?? null) ? $securityOptions['roles'] : [];
+
+        $rolesDriver = strtolower((string) ($rolesConfig['driver'] ?? 'none'));
+
+        if (! in_array($rolesDriver, ['none', 'spatie'], true)) {
+            $rolesDriver = 'none';
+        }
+
+        $configuredGuard = null;
+
+        if (isset($rolesConfig['guard']) && is_string($rolesConfig['guard'])) {
+            $candidateGuard = strtolower(trim($rolesConfig['guard']));
+
+            if ($candidateGuard !== '') {
+                $configuredGuard = $candidateGuard;
+            }
+        }
+
         $sanctumGuards = [];
 
         foreach ($guards as $guard) {
@@ -251,12 +273,16 @@ class TestsLayerGenerator implements LayerGenerator
 
         $tokenAbilities = array_values(array_unique(array_merge(
             $abilityAbilities,
-            $roleAbilities,
+            $rolesDriver === 'spatie' ? [] : $roleAbilities,
         )));
 
         if ($tokenAbilities === []) {
             $tokenAbilities = ['*'];
         }
+
+        $spatieGuard = $rolesDriver === 'spatie'
+            ? ($configuredGuard ?? ($sanctumGuards[0] ?? ($guards[0] ?? 'web')))
+            : null;
 
         $context = [
             'requires' => true,
@@ -270,7 +296,30 @@ class TestsLayerGenerator implements LayerGenerator
             'token_abilities' => $tokenAbilities,
             'token_abilities_export' => $this->exportArray($tokenAbilities),
             'user_variable' => Str::camel(sprintf('auth_%s_user', $primaryGuard)),
+            'roles_driver' => $rolesDriver,
+            'role_requirements' => $roleAbilities,
+            'ability_requirements' => $abilityAbilities,
         ];
+
+        if ($rolesDriver === 'spatie') {
+            $context['spatie'] = [
+                'enabled' => true,
+                'guard' => $spatieGuard,
+                'roles' => $roleAbilities,
+                'roles_export' => $this->exportArray($roleAbilities),
+                'permissions' => $abilityAbilities,
+                'permissions_export' => $this->exportArray($abilityAbilities),
+            ];
+        } else {
+            $context['spatie'] = [
+                'enabled' => false,
+                'guard' => null,
+                'roles' => [],
+                'roles_export' => '[]',
+                'permissions' => [],
+                'permissions_export' => '[]',
+            ];
+        }
 
         return $context;
     }

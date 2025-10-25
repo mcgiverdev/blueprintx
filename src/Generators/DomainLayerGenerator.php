@@ -130,8 +130,30 @@ class DomainLayerGenerator implements LayerGenerator
             'custom' => $this->buildCustomErrors($blueprint, $namespaces, $paths),
         ];
         $tenancy = $this->buildTenancyContext($blueprint, $options, $paths, $namespaces);
+
+        $security = is_array($options['security'] ?? null) ? $options['security'] : [];
+        $rolesConfig = is_array($security['roles'] ?? null) ? $security['roles'] : [];
+
+        $rolesDriver = strtolower((string) ($rolesConfig['driver'] ?? 'none'));
+
+        if (! in_array($rolesDriver, ['none', 'spatie'], true)) {
+            $rolesDriver = 'none';
+        }
+
+        $spatieGuard = null;
+
+        if (isset($rolesConfig['guard']) && is_string($rolesConfig['guard'])) {
+            $candidateGuard = strtolower(trim($rolesConfig['guard']));
+
+            if ($candidateGuard !== '') {
+                $spatieGuard = $candidateGuard;
+            }
+        }
+
         $auth = [
             'is_auth_model' => $this->isAuthModel($blueprint),
+            'roles_driver' => $rolesDriver,
+            'spatie_guard' => $spatieGuard,
         ];
 
         return [
@@ -144,6 +166,7 @@ class DomainLayerGenerator implements LayerGenerator
             'errors' => $errors,
             'auth' => $auth,
             'tenancy' => $tenancy,
+            'security' => $security,
             'driver' => [
                 'name' => $driver->name(),
                 'layers' => $driver->layers(),

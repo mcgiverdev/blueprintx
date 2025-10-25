@@ -27,6 +27,9 @@
 {% set tenant_schema_dependencies = [] %}
 {% endif %}
 {% set requires_tenant_migrations = tenant_schema.required|default(false) %}
+{% set spatie_enabled = tests.auth.spatie.enabled|default(false) %}
+{% set requires_schema_support = requires_tenant_migrations or spatie_enabled %}
+{% set spatie_guard = tests.auth.spatie.guard|default(tests.auth.primary_guard|default('web')) %}
 <?php
 
 namespace {{ namespaces.tests|default('Tests\Feature') }};
@@ -38,12 +41,16 @@ use {{ entity.class|default('App\\Domain\\Sample\\Models\\Sample') }};
 {% endfor %}
 {% if tests.password_fields|length > 0 %}use Illuminate\Support\Facades\Hash;
 {% endif %}
-{% if requires_tenant_migrations %}use Illuminate\Database\Schema\Blueprint;
+{% if requires_schema_support %}use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 {% endif %}
 {% if requires_tenant_routes %}use Illuminate\Support\Facades\Route;
 {% endif %}
 {% if tests.auth.requires|default(false) and tests.auth.uses_sanctum|default(false) %}use Laravel\Sanctum\Sanctum;
+{% endif %}
+{% if spatie_enabled %}use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 {% endif %}
 
 class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
@@ -65,10 +72,32 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% endif %}
 {% if tests.auth.requires|default(false) %}{% if tests.auth.uses_sanctum|default(false) %}        config(['sanctum.guard' => {{ tests.auth.sanctum_guard_export|default('[]') }}]);
 
-        ${{ tests.auth.user_variable|default('authUser') }} = {{ tests.auth.user_class_basename }}::factory()->create();
-        Sanctum::actingAs(${{ tests.auth.user_variable|default('authUser') }}, {{ tests.auth.token_abilities_export }}, '{{ tests.auth.primary_guard }}');
-{% else %}        ${{ tests.auth.user_variable|default('authUser') }} = {{ tests.auth.user_class_basename }}::factory()->create();
-        $this->actingAs(${{ tests.auth.user_variable|default('authUser') }}, '{{ tests.auth.primary_guard }}');
+{% if spatie_enabled %}        $this->ensureSpatieSecurity('{{ spatie_guard }}', {{ tests.auth.spatie.roles_export }}, {{ tests.auth.spatie.permissions_export }});
+
+{% endif %}        ${{ tests.auth.user_variable|default('authUser') }} = {{ tests.auth.user_class_basename }}::factory()->create();
+{% if spatie_enabled %}
+                foreach ({{ tests.auth.spatie.roles_export }} as $role) {
+                        ${{ tests.auth.user_variable|default('authUser') }}->assignRole($role);
+                }
+
+                foreach ({{ tests.auth.spatie.permissions_export }} as $permission) {
+                        ${{ tests.auth.user_variable|default('authUser') }}->givePermissionTo($permission);
+                }
+
+{% endif %}        Sanctum::actingAs(${{ tests.auth.user_variable|default('authUser') }}, {{ tests.auth.token_abilities_export }}, '{{ tests.auth.primary_guard }}');
+{% else %}{% if spatie_enabled %}        $this->ensureSpatieSecurity('{{ spatie_guard }}', {{ tests.auth.spatie.roles_export }}, {{ tests.auth.spatie.permissions_export }});
+
+{% endif %}        ${{ tests.auth.user_variable|default('authUser') }} = {{ tests.auth.user_class_basename }}::factory()->create();
+{% if spatie_enabled %}
+                foreach ({{ tests.auth.spatie.roles_export }} as $role) {
+                        ${{ tests.auth.user_variable|default('authUser') }}->assignRole($role);
+                }
+
+                foreach ({{ tests.auth.spatie.permissions_export }} as $permission) {
+                        ${{ tests.auth.user_variable|default('authUser') }}->givePermissionTo($permission);
+                }
+
+{% endif %}        $this->actingAs(${{ tests.auth.user_variable|default('authUser') }}, '{{ tests.auth.primary_guard }}');
 {% endif %}{% endif %}
 {% if requires_router_alias %}
                 $router = $this->app->make(\Illuminate\Routing\Router::class);
@@ -308,6 +337,115 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
                         }
 {% endif %}        });
 {% endfor %}
+        }
+{% endif %}{% if spatie_enabled %}
+
+        private function ensureSpatieSecurity(string $guard, array $roles, array $permissions): void
+        {
+                $tableNames = config('permission.table_names', []);
+
+                if (! is_array($tableNames)) {
+                        $tableNames = [];
+                }
+
+                $tableNames = array_merge($tableNames, [
+                        'roles' => 'roles',
+                        'permissions' => 'permissions',
+                        'model_has_permissions' => 'model_has_permissions',
+                        'model_has_roles' => 'model_has_roles',
+                        'role_has_permissions' => 'role_has_permissions',
+                ]);
+
+                config(['permission.table_names' => $tableNames]);
+
+                $columnNames = config('permission.column_names', []);
+
+                if (! is_array($columnNames)) {
+                        $columnNames = [];
+                }
+
+                $columnNames['model_morph_key'] = 'model_id';
+
+                config(['permission.column_names' => $columnNames]);
+
+                $guardNames = config('permission.guard_names', ['web']);
+
+                if (! is_array($guardNames)) {
+                        $guardNames = [$guardNames];
+                }
+
+                if (! in_array($guard, $guardNames, true)) {
+                        $guardNames[] = $guard;
+                }
+
+                config(['permission.guard_names' => $guardNames]);
+                config(['permission.defaults.guard' => $guard]);
+
+                $this->ensureSpatieTables();
+
+                $permissionRegistrar = app(PermissionRegistrar::class);
+                $permissionRegistrar->forgetCachedPermissions();
+
+                foreach ($permissions as $permission) {
+                        Permission::findOrCreate($permission, $guard);
+                }
+
+                foreach ($roles as $role) {
+                        Role::findOrCreate($role, $guard);
+                }
+        }
+
+        private function ensureSpatieTables(): void
+        {
+                if (! Schema::hasTable('permissions')) {
+                        Schema::create('permissions', function (Blueprint $table): void {
+                                $table->id();
+                                $table->string('name');
+                                $table->string('guard_name');
+                                $table->timestamps();
+                                $table->unique(['name', 'guard_name']);
+                        });
+                }
+
+                if (! Schema::hasTable('roles')) {
+                        Schema::create('roles', function (Blueprint $table): void {
+                                $table->id();
+                                $table->string('name');
+                                $table->string('guard_name');
+                                $table->timestamps();
+                                $table->unique(['name', 'guard_name']);
+                        });
+                }
+
+                if (! Schema::hasTable('model_has_permissions')) {
+                        Schema::create('model_has_permissions', function (Blueprint $table): void {
+                                $table->unsignedBigInteger('permission_id');
+                                $table->string('model_type');
+                                $table->string('model_id');
+                                $table->index(['model_id', 'model_type'], 'model_has_permissions_model_id_model_type_index');
+                                $table->foreign('permission_id')->references('id')->on('permissions')->onDelete('cascade');
+                        });
+                }
+
+                if (! Schema::hasTable('model_has_roles')) {
+                        Schema::create('model_has_roles', function (Blueprint $table): void {
+                                $table->unsignedBigInteger('role_id');
+                                $table->string('model_type');
+                                $table->string('model_id');
+                                $table->index(['model_id', 'model_type'], 'model_has_roles_model_id_model_type_index');
+                                $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
+                        });
+                }
+
+                if (! Schema::hasTable('role_has_permissions')) {
+                        Schema::create('role_has_permissions', function (Blueprint $table): void {
+                                $table->unsignedBigInteger('permission_id');
+                                $table->unsignedBigInteger('role_id');
+                                $table->primary(['permission_id', 'role_id']);
+                                $table->foreign('permission_id')->references('id')->on('permissions')->onDelete('cascade');
+                                $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
+                        });
+                }
         }
 {% endif %}
 }

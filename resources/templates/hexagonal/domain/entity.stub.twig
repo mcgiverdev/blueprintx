@@ -20,6 +20,8 @@ namespace {{ namespaces.domain_models|default('App\\Domain\\Models') }};
 {% set authenticatable = modelMeta.authenticatable|default(false) %}
 {% set hiddenAttributes = modelMeta.hidden|default([]) %}
 {% set hashPassword = modelMeta.hash_password|default(false) %}
+{% set usesSpatieRoles = authenticatable and auth.roles_driver|default('none') == 'spatie' %}
+{% set spatieGuardName = auth.spatie_guard|default(null) %}
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 {% if authenticatable %}
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -46,6 +48,9 @@ use {{ import }};
 {% if hashPassword %}
 use Illuminate\Support\Facades\Hash;
 {% endif %}
+{% if usesSpatieRoles %}
+use Spatie\Permission\Traits\HasRoles;
+{% endif %}
 
 class {{ entity.name|default('Sample')|studly }} extends {% if authenticatable %}Authenticatable{% else %}Model{% endif %}
 {
@@ -62,6 +67,9 @@ class {{ entity.name|default('Sample')|studly }} extends {% if authenticatable %
 {% endif %}
 {% if softDeletes %}
     use SoftDeletes;
+{% endif %}
+{% if usesSpatieRoles %}
+    use HasRoles;
 {% endif %}
 
     protected $table = '{{ naming.entity_table|default("samples") }}';
@@ -106,6 +114,10 @@ class {{ entity.name|default('Sample')|studly }} extends {% if authenticatable %
 {% endif %}
 {% if identifier.key_type is defined and identifier.key_type %}
     protected $keyType = '{{ identifier.key_type }}';
+
+{% endif %}
+{% if usesSpatieRoles and spatieGuardName %}
+    protected $guard_name = '{{ spatieGuardName }}';
 
 {% endif %}
 {% if not (modelMeta.timestamps|default(true)) %}
