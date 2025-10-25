@@ -60,6 +60,9 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
     {
         parent::setUp();
 
+{% if requires_tenant_migrations %}        $this->bootstrapTenantSchema();
+
+{% endif %}
 {% if tests.auth.requires|default(false) %}{% if tests.auth.uses_sanctum|default(false) %}        config(['sanctum.guard' => {{ tests.auth.sanctum_guard_export|default('[]') }}]);
 
         ${{ tests.auth.user_variable|default('authUser') }} = {{ tests.auth.user_class_basename }}::factory()->create();
@@ -81,9 +84,7 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% endif %}{% if requires_tenant_routes %}
 
                 $this->registerTenantRoutes();
-{% endif %}{% endif %}{% if requires_tenant_migrations %}        $this->bootstrapTenantSchema();
-
-{% endif %}
+{% endif %}{% endif %}
     }
 
     public function test_index_returns_paginated_list(): void
