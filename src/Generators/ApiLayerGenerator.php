@@ -16,7 +16,7 @@ use Illuminate\Support\Str;
 class ApiLayerGenerator implements LayerGenerator
 {
     private const ROLE_MIDDLEWARE_NAME = 'role';
-    private const ROLE_MIDDLEWARE_PROVIDER_FQN = 'App\\Providers\\BlueprintXAuthServiceProvider';
+    private const ROLE_MIDDLEWARE_PROVIDER_FQN = 'App\\Providers\\RoleMiddlewareServiceProvider';
 
     private array $formRequestConfig;
 
@@ -1429,12 +1429,12 @@ class ApiLayerGenerator implements LayerGenerator
             $artifacts[] = new GeneratedFile($middlewareRelative, $this->roleMiddlewareStub(), $middlewareSource !== null);
         }
 
-        $providerRelative = 'app/Providers/BlueprintXAuthServiceProvider.php';
+        $providerRelative = 'app/Providers/RoleMiddlewareServiceProvider.php';
         $providerPath = $this->resolveRoutesFilePath($providerRelative);
         $providerContents = ($providerPath !== null && is_file($providerPath)) ? @file_get_contents($providerPath) : false;
         $providerSource = is_string($providerContents) ? $providerContents : null;
 
-        if ($providerSource === null || ! str_contains($providerSource, 'BlueprintXAuthServiceProvider')) {
+        if ($providerSource === null || ! str_contains($providerSource, 'RoleMiddlewareServiceProvider')) {
             $artifacts[] = new GeneratedFile($providerRelative, $this->roleMiddlewareProviderStub(), $providerSource !== null);
         }
 
@@ -1585,20 +1585,21 @@ PHP;
 
     private function roleMiddlewareProviderStub(): string
     {
-        return <<<'PHP'
+    return <<<'PHP'
 <?php
 
 namespace App\Providers;
 
+use App\Http\Middleware\EnsureUserHasRole;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 
-class BlueprintXAuthServiceProvider extends ServiceProvider
+class RoleMiddlewareServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        $router = $this->app->make(Router::class);
-        $router->aliasMiddleware('role', \App\Http\Middleware\EnsureUserHasRole::class);
+    $router = $this->app->make(Router::class);
+    $router->aliasMiddleware('role', EnsureUserHasRole::class);
     }
 }
 
