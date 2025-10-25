@@ -481,19 +481,44 @@ class InfrastructureLayerGenerator implements LayerGenerator
         $providerPath = rtrim($options['paths']['providers'] ?? 'app/Providers', '/') . '/TenancyServiceProvider.php';
         $absolutePath = $this->resolveAbsolutePath($providerPath);
 
-        if (! is_string($absolutePath) || ! is_file($absolutePath)) {
-            return null;
+        $fileExists = is_string($absolutePath) && is_file($absolutePath);
+        $existingContents = $fileExists ? (file_get_contents($absolutePath) ?: '') : null;
+
+        $parsedUses = [];
+        $bindings = [];
+
+        if ($existingContents !== null && trim($existingContents) !== '') {
+            $parsed = $this->parseServiceProvider($existingContents);
+            $bindings = $parsed['bindings'];
+            $parsedUses = $parsed['uses'];
         }
 
-        $existingContents = file_get_contents($absolutePath) ?: '';
-
-        $parsed = $this->parseServiceProvider($existingContents);
-        $bindings = $parsed['bindings'];
         $bindings[$interfaceFqcn] = $implementationFqcn;
 
-        $namespace = $this->detectProviderNamespace($existingContents) ?? 'App\\Providers';
-        $viewData = $this->prepareServiceProviderData($namespace, $bindings, $parsed['uses']);
-        $updated = $this->applyServiceProviderData($existingContents, $viewData, $parsed['uses']);
+        $namespace = ($existingContents !== null && trim($existingContents) !== '')
+            ? $this->detectProviderNamespace($existingContents) ?? 'App\\Providers'
+            : 'App\\Providers';
+
+        $viewData = $this->prepareServiceProviderData($namespace, $bindings, $parsedUses);
+
+        $driverName = $context['driver']['name'] ?? 'hexagonal';
+        $template = sprintf('@%s/infrastructure/tenancy-service-provider.stub.twig', $driverName);
+
+        if (! $this->templates->exists($template)) {
+            $template = '@hexagonal/infrastructure/tenancy-service-provider.stub.twig';
+
+            if (! $this->templates->exists($template)) {
+                return null;
+            }
+        }
+
+        if (! $fileExists || trim((string) $existingContents) === '') {
+            $rendered = $this->templates->render($template, $viewData);
+
+            return new GeneratedFile($providerPath, $rendered, false);
+        }
+
+        $updated = $this->applyServiceProviderData($existingContents, $viewData, $parsedUses);
 
         if (trim($existingContents) === trim($updated)) {
             return null;
@@ -758,33 +783,9 @@ class InfrastructureLayerGenerator implements LayerGenerator
             return $contents;
         }
 
-        $body = substr($contents, $bodyStart, $bodyEnd - $bodyStart);
-        $missing = [];
+        $formattedBody = $lineEnding . implode($lineEnding, $bindingLines) . $lineEnding . '    ';
 
-        foreach ($bindingLines as $line) {
-            if (! str_contains($body, $line)) {
-                $missing[] = $line;
-            }
-        }
-
-        if ($missing === []) {
-            return $contents;
-        }
-
-        $insertion = '';
-        $trimmedBody = rtrim($body);
-
-        if ($trimmedBody === '') {
-            $insertion .= $lineEnding;
-        } elseif (! str_ends_with($body, $lineEnding)) {
-            $insertion .= $lineEnding;
-        }
-
-        $insertion .= implode($lineEnding, $missing) . $lineEnding;
-
-        $updatedBody = $body . $insertion;
-
-        return substr_replace($contents, $updatedBody, $bodyStart, $bodyEnd - $bodyStart);
+        return substr_replace($contents, $formattedBody, $bodyStart, $bodyEnd - $bodyStart);
     }
 
     /**
