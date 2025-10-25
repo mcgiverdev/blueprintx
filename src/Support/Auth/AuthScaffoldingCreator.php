@@ -452,7 +452,8 @@ class AuthScaffoldingCreator
         }
 
         $original = $this->files->get($path);
-        $normalized = str_replace(["\r\n", "\r"], "\n", $original);
+    $normalized = str_replace(["\r\n", "\r"], "\n", $original);
+    $normalized = $this->ensureAuthProvidersSection($normalized);
 
         $guardsBlock = $this->extractArrayBlock($normalized, "'guards' => [");
         $providersBlock = $this->extractArrayBlock($normalized, "'providers' => [");
@@ -492,6 +493,63 @@ class AuthScaffoldingCreator
                 $this->recordWrittenFile($path, $updated, $original);
             }
         }
+    }
+
+    private function ensureAuthProvidersSection(string $contents): string
+    {
+        if (str_contains($contents, "'providers' => [")) {
+            return $contents;
+        }
+
+        $segmentStart = strpos($contents, "| User Providers");
+
+        if ($segmentStart === false) {
+            return $contents;
+        }
+
+        $commentStart = strrpos(substr($contents, 0, $segmentStart), '/*');
+
+        if ($commentStart === false) {
+            return $contents;
+        }
+
+        $nextSection = strpos($contents, "\n    /*", $segmentStart);
+
+        if ($nextSection === false) {
+            $nextSection = strlen($contents);
+        }
+
+        $baseline = $this->providersSectionStub();
+
+        return substr($contents, 0, $commentStart) . $baseline . substr($contents, $nextSection);
+    }
+
+    private function providersSectionStub(): string
+    {
+        return <<<'PHP'
+    /*
+    |--------------------------------------------------------------------------
+    | User Providers
+    |--------------------------------------------------------------------------
+    |
+    | All authentication guards have a user provider, which defines how the
+    | users are actually retrieved out of your database or other storage
+    | system used by the application. Typically, Eloquent is utilized.
+    |
+    | If you have multiple user tables or models you may configure multiple
+    | sources which represent each model / table. These sources may then be
+    | assigned to any extra authentication guards you have defined.
+    |
+    */
+
+    'providers' => [
+        'users' => [
+            'driver' => 'eloquent',
+            'model' => env('AUTH_MODEL', App\Models\User::class),
+        ],
+    ],
+
+PHP;
     }
 
     /**

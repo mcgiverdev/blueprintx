@@ -88,6 +88,15 @@ SIGNATURE;
      */
     private array $securityGuardMatrix = [];
 
+    private bool $spatieRolesDriverDetected = false;
+
+    /**
+     * @var array<int, string>
+     */
+    private array $spatieRolesBlueprints = [];
+
+    private string $effectiveRolesDriver = 'none';
+
     public function handle(): int
     {
         $module = $this->normalizeNullableString($this->option('module') ?: $this->argument('module'));
@@ -172,8 +181,12 @@ SIGNATURE;
             return self::FAILURE;
         }
 
-        $this->securityGlobalConfig = $this->loadGlobalSecurityConfig($blueprintsPath);
-        $this->initializeSecurityAggregation($this->securityGlobalConfig);
+    $this->spatieRolesDriverDetected = false;
+    $this->spatieRolesBlueprints = [];
+    $this->effectiveRolesDriver = 'none';
+
+    $this->securityGlobalConfig = $this->loadGlobalSecurityConfig($blueprintsPath);
+    $this->initializeSecurityAggregation($this->securityGlobalConfig);
 
         $withOpenApiOption = (bool) $this->option('with-openapi');
         $withoutOpenApiOption = (bool) $this->option('without-openapi');
@@ -505,11 +518,15 @@ SIGNATURE;
         $securityMatrix = $this->finalizeSecurityMatrix();
 
         $this->securityScaffolding->ensure([
-            'driver' => $this->securityGlobalConfig['roles']['driver'] ?? 'none',
+            'driver' => $this->effectiveRolesDriver,
             'matrix' => $securityMatrix,
             'dry_run' => $dryRun,
             'force' => $force,
         ]);
+
+        if ($this->spatieRolesDriverDetected && ! $this->isComposerPackageInstalled('spatie/laravel-permission')) {
+            $this->renderSpatieReminder();
+        }
 
         $totalProcessed = $summary['written'] + $summary['overwritten'] + $summary['skipped'] + $summary['preview'];
         $parts = [];
@@ -649,6 +666,12 @@ SIGNATURE;
 
         $rolesConfig = $config['roles'] ?? [];
 
+        $configuredDriver = strtolower((string) ($rolesConfig['driver'] ?? 'none'));
+
+        if ($configuredDriver === 'spatie') {
+            $this->effectiveRolesDriver = 'spatie';
+        }
+
         foreach ($rolesConfig['roles'] ?? [] as $role) {
             if (! is_array($role) || ! isset($role['key'])) {
                 continue;
@@ -719,6 +742,10 @@ SIGNATURE;
         if ($driver !== 'spatie') {
             return;
         }
+
+        $this->spatieRolesDriverDetected = true;
+        $this->effectiveRolesDriver = 'spatie';
+        $this->spatieRolesBlueprints[] = $this->blueprintSummaryLabel($blueprint);
 
         $guard = is_string($rolesConfig['guard'] ?? null)
             ? $rolesConfig['guard']
@@ -980,9 +1007,53 @@ SIGNATURE;
         $this->line('  # Opcional: publicar configuración con --tag=config');
     }
 
+    private function renderSpatieReminder(): void
+    {
+        $this->warn('Se detectó el driver de roles "spatie" pero el paquete "spatie/laravel-permission" no está instalado.');
+        $this->line('  composer require spatie/laravel-permission');
+        $this->line('  php artisan vendor:publish --provider="Spatie\\Permission\\PermissionServiceProvider" --tag="permission-migrations"');
+        $this->line('  php artisan migrate');
+        $this->line('  # Opcional: publicar la configuración con --tag="permission-config"');
+
+        $blueprints = array_values(array_unique(array_filter($this->spatieRolesBlueprints)));
+
+        if ($blueprints !== []) {
+            $this->line('  Blueprint(s) que requieren el driver: ' . implode(', ', $blueprints));
+        }
+    }
+
     private function authScaffoldingRequiresSanctum(?Blueprint $blueprint): bool
     {
         return $blueprint instanceof Blueprint;
+    }
+
+    private function blueprintSummaryLabel(Blueprint $blueprint): string
+    {
+        $path = $blueprint->path();
+
+        if (is_string($path) && $path !== '') {
+            $normalized = str_replace('\\', '/', $path);
+            $marker = '/blueprints/';
+            $pos = strpos($normalized, $marker);
+
+            if ($pos !== false) {
+                $relative = substr($normalized, $pos + strlen($marker));
+
+                if (is_string($relative) && $relative !== '') {
+                    return $relative;
+                }
+            }
+
+            return basename($normalized);
+        }
+
+        $module = $blueprint->module();
+
+        if (is_string($module) && $module !== '') {
+            return $module . '/' . $blueprint->entity();
+        }
+
+        return $blueprint->entity();
     }
 
     private function isSanctumInstalled(): bool
