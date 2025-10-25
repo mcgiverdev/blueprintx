@@ -43,6 +43,8 @@ use Illuminate\Support\Facades\Schema;
 {% endif %}
 {% if requires_tenant_routes %}use Illuminate\Support\Facades\Route;
 {% endif %}
+{% if tests.auth.requires|default(false) and tests.auth.uses_sanctum|default(false) %}use Laravel\Sanctum\Sanctum;
+{% endif %}
 
 class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {
@@ -58,10 +60,13 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
     {
         parent::setUp();
 
-        $this->withoutMiddleware([
-            \Illuminate\Auth\Middleware\Authenticate::class,
-            'role',
-        ]);
+{% if tests.auth.requires|default(false) %}{% if tests.auth.uses_sanctum|default(false) %}        config(['sanctum.guard' => {{ tests.auth.sanctum_guard_export|default('[]') }}]);
+
+        ${{ tests.auth.user_variable|default('authUser') }} = {{ tests.auth.user_class_basename }}::factory()->create();
+        Sanctum::actingAs(${{ tests.auth.user_variable|default('authUser') }}, {{ tests.auth.token_abilities_export }}, '{{ tests.auth.primary_guard }}');
+{% else %}        ${{ tests.auth.user_variable|default('authUser') }} = {{ tests.auth.user_class_basename }}::factory()->create();
+        $this->actingAs(${{ tests.auth.user_variable|default('authUser') }}, '{{ tests.auth.primary_guard }}');
+{% endif %}{% endif %}
 {% if requires_router_alias %}
                 $router = $this->app->make(\Illuminate\Routing\Router::class);
 
@@ -136,8 +141,10 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% endif %}
 {% endfor %}
 
-{% if tests.password_fields|length > 0 %}
-        $created = {{ entity.class|class_basename }}::query()->latest('created_at')->firstOrFail();
+        $createdId = $response->json('data.id');
+        $this->assertNotNull($createdId);
+
+{% if tests.password_fields|length > 0 %}        $created = {{ entity.class|class_basename }}::query()->findOrFail($createdId);
 
         foreach ([
 {% for field in tests.password_fields %}            '{{ field.name }}' => {{ field.store_value }},
@@ -150,8 +157,8 @@ class {{ entity.name|default('Sample')|studly }}FeatureTest extends TestCase
 {% for field in tests.store_payload %}{% if field.is_password %}            '{{ field.name }}' => $created->{{ field.name }},
 {% else %}            '{{ field.name }}' => {{ field.value }},
 {% endif %}{% endfor %}        ]);
-{% else %}
-        $this->assertDatabaseHas('{{ blueprint.table }}', [
+{% else %}        $this->assertDatabaseHas('{{ blueprint.table }}', [
+            'id' => $createdId,
 {% for field in tests.store_payload %}            '{{ field.name }}' => {{ field.value }},
 {% endfor %}        ]);
 {% endif %}

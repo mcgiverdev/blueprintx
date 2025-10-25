@@ -81,6 +81,7 @@ class TestsLayerGenerator implements LayerGenerator
         $payloads = $this->prepareFieldPayloads($blueprint, $relations);
         $payloads['tenant_schema'] = $this->buildTenantSchemaDefinition($blueprint, $relationMap);
     $payloads['tenant_schema_dependencies'] = $this->resolveTenantSchemaDependencies($blueprint, $relations, $relationMap);
+    $payloads['auth'] = $this->buildAuthenticationContext($blueprint);
 
         $naming = $this->namingContext($blueprint);
         $optimisticLocking = $this->buildOptimisticLockingContext($blueprint);
@@ -106,6 +107,18 @@ class TestsLayerGenerator implements LayerGenerator
             static fn (string $import) => $import !== ($entity['class'] ?? null)
         ));
 
+        $authModel = $payloads['auth']['user_model'] ?? null;
+
+        if (
+            ($payloads['auth']['requires'] ?? false) === true
+            && is_string($authModel)
+            && $authModel !== ''
+            && $authModel !== ($entity['class'] ?? null)
+            && ! in_array($authModel, $relationImports, true)
+        ) {
+            $relationImports[] = $authModel;
+        }
+
         return [
             'blueprint' => $blueprint->toArray(),
             'entity' => $entity,
@@ -127,6 +140,156 @@ class TestsLayerGenerator implements LayerGenerator
             'options' => $blueprint->options(),
             'optimistic_locking' => $optimisticLocking,
         ];
+    }
+
+    private function buildAuthenticationContext(Blueprint $blueprint): array
+    {
+        $api = $blueprint->toArray()['api'] ?? [];
+        $middleware = $api['middleware'] ?? [];
+
+        if (! is_array($middleware) || $middleware === []) {
+            return [
+                'requires' => false,
+            ];
+        }
+
+        $guards = [];
+        $roleAbilities = [];
+        $abilityAbilities = [];
+
+        foreach ($middleware as $entry) {
+            if (! is_string($entry) || $entry === '') {
+                continue;
+            }
+
+            [$alias, $parameters] = array_pad(explode(':', $entry, 2), 2, null);
+            $alias = strtolower((string) $alias);
+
+            $parameterValues = [];
+
+            if (is_string($parameters) && $parameters !== '') {
+                $parameterValues = preg_split('/[,|]+/', $parameters) ?: [];
+                $parameterValues = array_values(array_filter(array_map('trim', $parameterValues), static fn ($value) => $value !== ''));
+            }
+
+            if ($alias === 'auth') {
+                if ($parameterValues === []) {
+                    $defaultGuard = config('auth.defaults.guard');
+
+                    if (is_string($defaultGuard) && $defaultGuard !== '') {
+                        $parameterValues = [$defaultGuard];
+                    }
+                }
+
+                foreach ($parameterValues as $guard) {
+                    $guards[] = $guard;
+                }
+
+                if ($parameterValues === []) {
+                    $guards[] = 'web';
+                }
+
+                continue;
+            }
+
+            if ($alias === 'role') {
+                $roleAbilities = array_merge($roleAbilities, $parameterValues);
+
+                continue;
+            }
+
+            if ($alias === 'ability' || $alias === 'abilities') {
+                $abilityAbilities = array_merge($abilityAbilities, $parameterValues);
+            }
+        }
+
+        $guards = array_values(array_unique(array_filter($guards, static fn ($guard) => is_string($guard) && $guard !== '')));
+
+        if ($guards === []) {
+            return [
+                'requires' => false,
+            ];
+        }
+
+        $sanctumGuards = [];
+
+        foreach ($guards as $guard) {
+            $driver = config(sprintf('auth.guards.%s.driver', $guard));
+
+            if ($driver === 'sanctum') {
+                $sanctumGuards[] = $guard;
+            }
+        }
+
+        if (in_array('sanctum', $guards, true) && ! in_array('sanctum', $sanctumGuards, true)) {
+            $sanctumGuards[] = 'sanctum';
+        }
+
+        $primaryGuard = $sanctumGuards[0] ?? $guards[0];
+
+        $provider = null;
+
+        foreach ([$primaryGuard, ...$guards] as $candidateGuard) {
+            $candidateProvider = config(sprintf('auth.guards.%s.provider', $candidateGuard));
+
+            if (is_string($candidateProvider) && $candidateProvider !== '') {
+                $provider = $candidateProvider;
+
+                break;
+            }
+        }
+
+        if (! is_string($provider) || $provider === '') {
+            $provider = 'users';
+        }
+
+        $userModel = config(sprintf('auth.providers.%s.model', $provider));
+
+        if (! is_string($userModel) || $userModel === '') {
+            $userModel = config('auth.providers.users.model', 'App\\Models\\User');
+        }
+
+        $tokenAbilities = array_values(array_unique(array_merge(
+            $abilityAbilities,
+            $roleAbilities,
+        )));
+
+        if ($tokenAbilities === []) {
+            $tokenAbilities = ['*'];
+        }
+
+        $context = [
+            'requires' => true,
+            'guards' => $guards,
+            'primary_guard' => $primaryGuard,
+            'uses_sanctum' => $sanctumGuards !== [],
+            'sanctum_guards' => $sanctumGuards,
+            'sanctum_guard_export' => $sanctumGuards !== [] ? $this->exportArray($sanctumGuards) : '[]',
+            'user_model' => $userModel,
+            'user_class_basename' => class_basename($userModel),
+            'token_abilities' => $tokenAbilities,
+            'token_abilities_export' => $this->exportArray($tokenAbilities),
+            'user_variable' => Str::camel(sprintf('auth_%s_user', $primaryGuard)),
+        ];
+
+        return $context;
+    }
+
+    /**
+     * @param array<int, string> $values
+     */
+    private function exportArray(array $values): string
+    {
+        if ($values === []) {
+            return '[]';
+        }
+
+        $escaped = array_map(
+            static fn (string $value): string => "'" . addslashes($value) . "'",
+            $values
+        );
+
+        return '[' . implode(', ', $escaped) . ']';
     }
 
     /**

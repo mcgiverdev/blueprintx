@@ -336,14 +336,11 @@ SIGNATURE;
                     );
                 }
             }
-                $securityContext = $this->buildSecurityContext($blueprint);
-                $this->collectSecurityDefinitions($blueprint, $securityContext);
 
-                $blueprintOptions = $pipelineOptions;
-                $blueprintOptions['security'] = $securityContext;
+            $securityContext = $this->buildSecurityContext($blueprint);
+            $this->collectSecurityDefinitions($blueprint, $securityContext);
 
-                try {
-                    $result = $this->pipeline->generate($blueprint, $blueprintOptions);
+            $pipelineOptions = [
                 'dry_run' => $dryRun,
                 'force' => $force,
                 'with_openapi' => $withOpenApi,
@@ -397,6 +394,7 @@ SIGNATURE;
                     'central_base_url' => $tenancyCentralBaseUrl,
                     'tenant_base_url' => $tenancyTenantBaseUrl,
                 ],
+                'security' => $securityContext,
             ];
 
             if ($only !== null) {

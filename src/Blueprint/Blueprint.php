@@ -203,6 +203,12 @@ class Blueprint
 
     public function toArray(): array
     {
+        $security = $this->security;
+
+        if ($security === []) {
+            $security = null;
+        }
+
         return [
             'path' => $this->path,
             'module' => $this->module,
@@ -222,7 +228,7 @@ class Blueprint
             'errors' => $this->schemaErrors(),
             'metadata' => $this->metadata,
             'tenancy' => $this->tenancy,
-            'security' => $this->security,
+            'security' => $security,
         ];
     }
 
