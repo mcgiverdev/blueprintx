@@ -686,92 +686,6 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
         }
 
-        if (Str::lower($this->tableName($blueprint)) !== 'users') {
-            if ($modified) {
-                file_put_contents($migrationPath, $contents);
-            }
-
-            return;
-        }
-
-        $missingColumns = [];
-        $skipFields = array_merge(
-            ['id', 'created_at', 'updated_at', 'deleted_at'],
-            $this->collectFieldList(self::RESERVED_TABLE_BASELINES['users']['fields'] ?? [])
-        );
-
-        foreach ($blueprint->fields() as $field) {
-            $name = $field->name;
-
-            if (! is_string($name) || $name === '') {
-                continue;
-            }
-
-            $lower = Str::lower($name);
-
-            if (in_array($lower, $skipFields, true)) {
-                continue;
-            }
-
-            if (preg_match('/\$table->[^;]*\(\s*\'' . preg_quote($name, '/') . '\'/i', $contents)) {
-                continue;
-            }
-
-            $relation = $relationsByField[$name] ?? null;
-            $definition = $this->buildColumnDefinition($field, $relation);
-
-            if ($definition !== '') {
-                $missingColumns[] = $definition;
-            }
-        }
-
-        $needsSoftDeletes = ($blueprint->options()['softDeletes'] ?? false) === true
-            && ! str_contains($contents, '->softDeletes(');
-
-        if ($missingColumns === [] && ! $needsSoftDeletes) {
-            if ($modified) {
-                file_put_contents($migrationPath, $contents);
-            }
-
-            return;
-        }
-
-        if (! preg_match('/^(\s*)(\$table->timestamps\(\);)/m', $contents, $match)) {
-            if ($modified) {
-                file_put_contents($migrationPath, $contents);
-            }
-
-            return;
-        }
-
-        $indent = $match[1];
-        $timestampLine = $match[2];
-
-        $insertion = '';
-
-        foreach ($missingColumns as $definition) {
-            $insertion .= $indent . $definition . PHP_EOL;
-        }
-
-        if ($needsSoftDeletes) {
-            $insertion .= $indent . '$table->softDeletes();' . PHP_EOL;
-        }
-
-    $pattern = '/^(\s*\$table->timestamps\(\);)/m';
-        $replacement = $insertion . '$1';
-        $updated = preg_replace($pattern, $replacement, $contents, 1);
-
-        if ($updated === null) {
-            if ($modified) {
-                file_put_contents($migrationPath, $contents);
-            }
-
-            return;
-        }
-
-        $contents = $updated;
-        $modified = true;
-
         if ($modified) {
             file_put_contents($migrationPath, $contents);
         }
@@ -811,6 +725,12 @@ class DatabaseLayerGenerator implements LayerGenerator
             $recorded = [];
         }
 
+        $appliedLookup = [];
+
+        if ($appliedFields !== []) {
+            $appliedLookup = array_fill_keys(array_map(static fn (string $field): string => Str::lower($field), $appliedFields), true);
+        }
+
         $shared = $this->reservedSharedState($blueprint);
 
         $registered = array_unique(array_merge($baseline, $shared['fields'], $recorded));
@@ -825,7 +745,7 @@ class DatabaseLayerGenerator implements LayerGenerator
             }
 
             $lower = Str::lower($name);
-            if (in_array($lower, $registered, true)) {
+            if (in_array($lower, $registered, true) && ! isset($appliedLookup[$lower])) {
                 continue;
             }
 
@@ -845,10 +765,17 @@ class DatabaseLayerGenerator implements LayerGenerator
 
         $softDeletesRequested = $this->reservedWantsSoftDeletes($blueprint);
         $softDeletesRecorded = $this->interpretBoolean($entry['reserved_soft_deletes'] ?? null) || $shared['soft_deletes'];
+        $softDeletesApplied = $this->reservedSoftDeletesFromExistingAlterFiles($blueprint, $entry);
+
+        if ($softDeletesRecorded && ! $softDeletesApplied) {
+            $softDeletesRecorded = false;
+        }
+
+        $includeSoftDeletes = $softDeletesRequested && (! $softDeletesRecorded || $softDeletesApplied);
 
         return [
             'fields' => $fields,
-            'soft_deletes' => $softDeletesRequested && ! $softDeletesRecorded,
+            'soft_deletes' => $includeSoftDeletes,
         ];
     }
 
@@ -945,6 +872,41 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         return array_values(array_unique($existing));
+    }
+
+    private function reservedSoftDeletesFromExistingAlterFiles(Blueprint $blueprint, array $historyEntry): bool
+    {
+        if (! isset($historyEntry['reserved_alters']) || ! is_array($historyEntry['reserved_alters'])) {
+            return false;
+        }
+
+        $table = $this->tableName($blueprint);
+
+        foreach ($historyEntry['reserved_alters'] as $alter) {
+            if (! is_array($alter)) {
+                continue;
+            }
+
+            $prefix = $alter['prefix'] ?? null;
+
+            if (! is_string($prefix) || $prefix === '') {
+                continue;
+            }
+
+            $root = $this->currentMigrationsRoot ?? 'database/migrations';
+            $root = rtrim(str_replace('\\', '/', $root), '/');
+            $path = $this->toAbsolutePath($root . '/' . $prefix . '_alter_' . $table . '_table.php');
+
+            if (! is_file($path)) {
+                continue;
+            }
+
+            if ($this->interpretBoolean($alter['soft_deletes'] ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function reservedBaselineFromBlueprint(Blueprint $blueprint): array
@@ -1376,7 +1338,61 @@ class DatabaseLayerGenerator implements LayerGenerator
     {
         $migrationsRoot = $migrationsRootOverride ?? $this->resolveMigrationsRoot($blueprint, $options);
         $migrationsRoot = rtrim(str_replace('\\', '/', $migrationsRoot), '/');
+        $table = $this->tableName($blueprint);
         $customPrefix = $this->reservedAlterCustomPrefix($blueprint);
+
+        if ($customPrefix === null) {
+            $history = $this->loadHistory();
+            $key = $this->historyKey($blueprint);
+
+            if (isset($history['migrations'][$key]) && is_array($history['migrations'][$key])) {
+                $entry = $history['migrations'][$key];
+                $existingPrefix = null;
+
+                if (isset($entry['reserved_alters']) && is_array($entry['reserved_alters'])) {
+                    foreach ($entry['reserved_alters'] as $alter) {
+                        if (! is_array($alter)) {
+                            continue;
+                        }
+
+                        $storedPrefix = $alter['prefix'] ?? null;
+
+                        if (! is_string($storedPrefix) || $storedPrefix === '') {
+                            continue;
+                        }
+
+                        $candidate = $migrationsRoot . '/' . $storedPrefix . '_alter_' . $table . '_table.php';
+                        $absolutePath = $this->toAbsolutePath($candidate);
+
+                        if (is_file($absolutePath)) {
+                            $existingPrefix = $storedPrefix;
+                            break;
+                        }
+
+                        if ($existingPrefix === null) {
+                            $existingPrefix = $storedPrefix;
+                        }
+                    }
+                }
+
+                if ($existingPrefix !== null) {
+                    if ($this->lastGeneratedTimestamp === null || strcmp($existingPrefix, $this->lastGeneratedTimestamp) > 0) {
+                        $this->lastGeneratedTimestamp = $existingPrefix;
+                    }
+
+                    return [
+                        'path' => $migrationsRoot . '/' . $existingPrefix . '_alter_' . $table . '_table.php',
+                        'prefix' => $existingPrefix,
+                    ];
+                }
+            }
+
+            $existingFile = $this->findExistingReservedAlterFile($migrationsRoot, $table);
+
+            if ($existingFile !== null) {
+                return $existingFile;
+            }
+        }
 
         if ($customPrefix !== null) {
             $prefix = $customPrefix;
@@ -1387,10 +1403,64 @@ class DatabaseLayerGenerator implements LayerGenerator
         } else {
             $prefix = $this->generateNextTimestamp();
         }
-        $filename = sprintf('%s_alter_%s_table.php', $prefix, $this->tableName($blueprint));
 
         return [
-            'path' => $migrationsRoot . '/' . $filename,
+            'path' => $migrationsRoot . '/' . $prefix . '_alter_' . $table . '_table.php',
+            'prefix' => $prefix,
+        ];
+    }
+
+    private function findExistingReservedAlterFile(string $migrationsRoot, string $table): ?array
+    {
+        $normalizedRoot = rtrim(str_replace('\\', '/', $migrationsRoot), '/');
+        $absoluteRoot = $this->toAbsolutePath($normalizedRoot);
+
+        if (! is_dir($absoluteRoot)) {
+            return null;
+        }
+
+        $pattern = rtrim($absoluteRoot, DIRECTORY_SEPARATOR . '/') . DIRECTORY_SEPARATOR . '*_alter_' . $table . '_table.php';
+        $files = glob($pattern);
+
+        if ($files === false || $files === []) {
+            return null;
+        }
+
+        sort($files);
+
+        $file = null;
+
+        foreach (array_reverse($files) as $candidate) {
+            if (! is_string($candidate) || $candidate === '') {
+                continue;
+            }
+
+            if (! is_file($candidate)) {
+                continue;
+            }
+
+            $file = $candidate;
+            break;
+        }
+
+        if ($file === null) {
+            return null;
+        }
+
+        $filename = pathinfo($file, PATHINFO_BASENAME);
+
+        if (! preg_match('/^(\d{4}_\d{2}_\d{2}_\d{6})_alter_' . preg_quote($table, '/') . '_table\.php$/', $filename, $matches)) {
+            return null;
+        }
+
+        $prefix = $matches[1];
+
+        if ($this->lastGeneratedTimestamp === null || strcmp($prefix, $this->lastGeneratedTimestamp) > 0) {
+            $this->lastGeneratedTimestamp = $prefix;
+        }
+
+        return [
+            'path' => $normalizedRoot . '/' . $filename,
             'prefix' => $prefix,
         ];
     }
@@ -1445,19 +1515,40 @@ class DatabaseLayerGenerator implements LayerGenerator
         $alters = [];
 
         if (isset($entry['reserved_alters']) && is_array($entry['reserved_alters'])) {
-            $alters = $entry['reserved_alters'];
+            foreach ($entry['reserved_alters'] as $alterEntry) {
+                if (! is_array($alterEntry)) {
+                    continue;
+                }
+
+                $storedPrefix = $alterEntry['prefix'] ?? null;
+
+                if (! is_string($storedPrefix) || $storedPrefix === '') {
+                    continue;
+                }
+
+                $alters[$storedPrefix] = [
+                    'prefix' => $storedPrefix,
+                    'fields' => array_values(array_unique($this->collectFieldList($alterEntry['fields'] ?? []))),
+                    'soft_deletes' => (bool) ($alterEntry['soft_deletes'] ?? false),
+                ];
+            }
         }
 
-        $alters[] = [
-            'prefix' => $prefix,
-            'fields' => array_values(array_filter(
-                array_map(static fn ($field): ?string => is_string($field) ? $field : null, $metadata['fields'] ?? []),
-                static fn ($field): bool => $field !== null
-            )),
-            'soft_deletes' => (bool) ($metadata['soft_deletes'] ?? false),
-        ];
+        $newFields = array_values(array_unique($this->collectFieldList($metadata['fields'] ?? [])));
+        $newSoftDeletes = (bool) ($metadata['soft_deletes'] ?? false);
 
-        $history['migrations'][$key]['reserved_alters'] = $alters;
+        if (isset($alters[$prefix])) {
+            $alters[$prefix]['fields'] = array_values(array_unique(array_merge($alters[$prefix]['fields'], $newFields)));
+            $alters[$prefix]['soft_deletes'] = $alters[$prefix]['soft_deletes'] || $newSoftDeletes;
+        } else {
+            $alters[$prefix] = [
+                'prefix' => $prefix,
+                'fields' => $newFields,
+                'soft_deletes' => $newSoftDeletes,
+            ];
+        }
+
+        $history['migrations'][$key]['reserved_alters'] = array_values($alters);
 
         $this->history = $history;
         $this->persistHistory();
@@ -2042,7 +2133,11 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         if (Str::lower($this->tableName($blueprint)) === 'users') {
-            return true;
+            $tenancyMode = $this->normalizeTenancyMode(
+                $blueprint->tenancy()['mode'] ?? $this->tenancyMode($blueprint) ?? $this->inferTenancyModeFromModuleKey($this->moduleKey($blueprint))
+            );
+
+            return $tenancyMode !== 'tenant';
         }
 
         return false;

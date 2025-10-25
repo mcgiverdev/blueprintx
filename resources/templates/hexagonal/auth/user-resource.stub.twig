@@ -8,7 +8,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 {% for import in imports %}use {{ import }};
 {% endfor %}
 {% endif %}
-class UserResource extends JsonResource
+class {{ resource_class }} extends JsonResource
 {
     /**
      * @return array<string, mixed>
