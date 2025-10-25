@@ -412,28 +412,8 @@ class AuthScaffoldingCreator
             }
         }
 
-        $hasAllControllers = true;
-
-        foreach ($contexts as $context) {
-            $controllerClass = $context['controller']['class'];
-
-            if (! str_contains($normalized, $controllerClass . '::class')) {
-                $hasAllControllers = false;
-                break;
-            }
-        }
-
-        if (! $hasAllControllers) {
-            $authBlock = $this->buildAuthRouteBlock($contexts);
-            $needle = "Route::prefix('crm')";
-            $position = strpos($normalized, $needle);
-
-            if ($position !== false) {
-                $normalized = substr($normalized, 0, $position) . $authBlock . "\n" . substr($normalized, $position);
-            } else {
-                $normalized = rtrim($normalized) . $authBlock . "\n";
-            }
-        }
+        $authBlock = $this->buildAuthRouteBlock($contexts);
+        $normalized = $this->synchronizeAuthRouteBlock($normalized, $authBlock);
 
         $updated = $this->restoreLineEndings($original, $normalized);
 
@@ -442,6 +422,25 @@ class AuthScaffoldingCreator
                 $this->recordWrittenFile($path, $updated, $original);
             }
         }
+    }
+
+    private function synchronizeAuthRouteBlock(string $contents, string $authBlock): string
+    {
+        $pattern = "#\nRoute::prefix\\('auth'\\)->group\\(function \(\): void \\{\n(?: {4}.*\n)*?\}\);\n#";
+        $normalizedBlock = trim($authBlock, "\n");
+
+        if (preg_match($pattern, $contents) === 1) {
+            return preg_replace($pattern, "\n" . $normalizedBlock . "\n", $contents, 1) ?? $contents;
+        }
+
+        $needle = "Route::prefix('crm')";
+        $position = strpos($contents, $needle);
+
+        if ($position !== false) {
+            return substr($contents, 0, $position) . "\n" . $normalizedBlock . "\n" . substr($contents, $position);
+        }
+
+        return rtrim($contents) . "\n" . $normalizedBlock . "\n";
     }
 
     private function ensureAuthConfiguration(array $contexts, bool $force): void
@@ -682,8 +681,26 @@ class AuthScaffoldingCreator
     {
         $indent = '    ';
         $controllerClass = $context['controller']['class'];
-        $prefix = $context['key'];
         $guard = $context['guard'];
+        $supportsRegistration = (bool) ($context['supports_registration'] ?? true);
+
+        if (($context['key'] ?? '') === 'central' && ! ($context['tenant_aware'] ?? false)) {
+            $lines = [];
+            $lines[] = sprintf("%sRoute::post('login', [%s::class, 'login']);", $indent, $controllerClass);
+
+            if ($supportsRegistration) {
+                $lines[] = sprintf("%sRoute::post('register', [%s::class, 'register']);", $indent, $controllerClass);
+            }
+
+            $lines[] = sprintf("%sRoute::middleware(['auth:%s'])->group(function (): void {", $indent, $guard);
+            $lines[] = sprintf("%s    Route::post('logout', [%s::class, 'logout']);", $indent, $controllerClass);
+            $lines[] = sprintf("%s    Route::get('me', [%s::class, 'me']);", $indent, $controllerClass);
+            $lines[] = sprintf("%s});", $indent);
+
+            return implode("\n", $lines);
+        }
+
+        $prefix = $context['key'];
         $middlewares = [];
 
         if ($context['tenant_aware']) {
@@ -697,6 +714,11 @@ class AuthScaffoldingCreator
         $group = [];
         $group[] = sprintf("%sRoute::prefix('%s')%s->group(function (): void {", $indent, $prefix, $middlewareSuffix);
         $group[] = sprintf("%s    Route::post('login', [%s::class, 'login']);", $indent, $controllerClass);
+
+        if ($supportsRegistration) {
+            $group[] = sprintf("%s    Route::post('register', [%s::class, 'register']);", $indent, $controllerClass);
+        }
+
         $group[] = sprintf("%s    Route::middleware(['auth:%s'])->group(function (): void {", $indent, $guard);
         $group[] = sprintf("%s        Route::post('logout', [%s::class, 'logout']);", $indent, $controllerClass);
         $group[] = sprintf("%s        Route::get('me', [%s::class, 'me']);", $indent, $controllerClass);

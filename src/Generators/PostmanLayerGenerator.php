@@ -171,10 +171,15 @@ class PostmanLayerGenerator implements LayerGenerator
         $entityName = Str::studly($blueprint->entity());
         $description = $document['info']['description'] ?? null;
 
-        $items = array_merge(
-            [$this->buildAuthGroup($authFields, $apiPrefix)],
-            $this->buildItems($document, $entityName, $blueprint, $apiPrefix)
-        );
+        $requestGroups = $this->buildItems($document, $entityName, $blueprint, $apiPrefix);
+        $resourceNodes = $this->buildResourceNodes($requestGroups, $blueprint);
+        $segments = $this->moduleSegments($blueprint);
+
+        if ($this->isAuthModule($segments)) {
+            array_unshift($resourceNodes, $this->buildAuthGroup($authFields, $apiPrefix));
+        }
+
+        $organizedItems = $this->wrapSegments($segments, $resourceNodes);
 
         return [
             'info' => array_filter([
@@ -183,7 +188,7 @@ class PostmanLayerGenerator implements LayerGenerator
                 'schema' => 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
                 'description' => is_string($description) && $description !== '' ? $description : null,
             ]),
-            'item' => $items,
+            'item' => $organizedItems,
             'variable' => $this->buildVariables($baseUrl, $centralBaseUrl, $tenantBaseUrl, $apiPrefix, $version),
         ];
     }
@@ -283,6 +288,203 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         return array_values($groups);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $groups
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildResourceNodes(array $groups, Blueprint $blueprint): array
+    {
+        if ($groups === []) {
+            return [];
+        }
+
+        if (count($groups) === 1) {
+            $requests = $this->collectRequests($groups);
+
+            if ($requests === []) {
+                return [];
+            }
+
+            return [[
+                'name' => $this->entityFolderName($blueprint),
+                'item' => $requests,
+            ]];
+        }
+
+        $nodes = [];
+
+        foreach ($groups as $group) {
+            if (! is_array($group)) {
+                continue;
+            }
+
+            $requests = $this->collectRequests([$group]);
+
+            if ($requests === []) {
+                continue;
+            }
+
+            $nodes[] = [
+                'name' => $this->formatGroupName($group['name'] ?? null, $blueprint),
+                'item' => $requests,
+            ];
+        }
+
+        if ($nodes === []) {
+            $requests = $this->collectRequests($groups);
+
+            if ($requests === []) {
+                return [];
+            }
+
+            return [[
+                'name' => $this->entityFolderName($blueprint),
+                'item' => $requests,
+            ]];
+        }
+
+        return $nodes;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $groups
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectRequests(array $groups): array
+    {
+        $requests = [];
+        $seen = [];
+
+        foreach ($groups as $group) {
+            if (! is_array($group)) {
+                continue;
+            }
+
+            $items = $group['item'] ?? [];
+
+            if (! is_array($items)) {
+                continue;
+            }
+
+            foreach ($items as $request) {
+                if (! is_array($request)) {
+                    continue;
+                }
+
+                $name = $request['name'] ?? null;
+
+                if (is_string($name) && $name !== '') {
+                    if (isset($seen[$name])) {
+                        continue;
+                    }
+
+                    $seen[$name] = true;
+                }
+
+                $requests[] = $request;
+            }
+        }
+
+        return $requests;
+    }
+
+    private function entityFolderName(Blueprint $blueprint): string
+    {
+        $plural = Str::pluralStudly($blueprint->entity());
+
+        return $this->titleize($plural);
+    }
+
+    private function formatGroupName(?string $name, Blueprint $blueprint): string
+    {
+        if (! is_string($name) || trim($name) === '') {
+            return $this->entityFolderName($blueprint);
+        }
+
+        $segments = preg_split('/[\\\\\/]/', $name) ?: [];
+        $candidate = trim((string) end($segments));
+
+        if ($candidate === '') {
+            $candidate = $name;
+        }
+
+        return $this->titleize($candidate);
+    }
+
+    private function titleize(string $value): string
+    {
+        $normalized = str_replace(['-', '_'], ' ', $value);
+        $normalized = preg_replace('/(?<!^)([A-Z])/', ' $1', $normalized ?? '') ?? '';
+        $normalized = preg_replace('/\s+/', ' ', $normalized) ?? '';
+        $normalized = trim($normalized);
+
+        if ($normalized === '') {
+            return $value;
+        }
+
+        $upper = strtoupper($normalized);
+
+        if (in_array($upper, ['HR', 'CRM', 'API'], true)) {
+            return $upper;
+        }
+
+        return Str::title($normalized);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function moduleSegments(Blueprint $blueprint): array
+    {
+        $module = $blueprint->module();
+
+        if ($module === null || trim($module) === '') {
+            return ['General'];
+        }
+
+        $parts = array_filter(explode('\\', $module), static fn (string $part): bool => $part !== '');
+
+        if ($parts === []) {
+            return ['General'];
+        }
+
+        return array_map(fn (string $part): string => $this->titleize(Str::studly($part)), $parts);
+    }
+
+    private function isAuthModule(array $segments): bool
+    {
+        if ($segments === []) {
+            return false;
+        }
+
+        $last = strtolower($segments[array_key_last($segments)] ?? '');
+
+        return $last === 'auth';
+    }
+
+    /**
+     * @param array<int, string> $segments
+     * @param array<int, array<string, mixed>> $nodes
+     * @return array<int, array<string, mixed>>
+     */
+    private function wrapSegments(array $segments, array $nodes): array
+    {
+        if ($nodes === []) {
+            return [];
+        }
+
+        if ($segments === []) {
+            return $nodes;
+        }
+
+        $segment = array_shift($segments);
+
+        return [[
+            'name' => $segment,
+            'item' => $this->wrapSegments($segments, $nodes),
+        ]];
     }
 
     /**
@@ -784,9 +986,9 @@ class PostmanLayerGenerator implements LayerGenerator
 
     private function buildLoginRequest(string $apiPrefix): array
     {
-        $path = '/auth/login';
+        $path = $this->authEndpoint('login');
         $pathDetails = [
-            'segments' => ['auth', 'login'],
+            'segments' => $this->authEndpointSegments('login'),
             'variables' => [],
         ];
 
@@ -819,9 +1021,9 @@ class PostmanLayerGenerator implements LayerGenerator
      */
     private function buildRegisterRequest(array $authFields, string $apiPrefix): array
     {
-        $path = '/auth/register';
+        $path = $this->authEndpoint('register');
         $pathDetails = [
-            'segments' => ['auth', 'register'],
+            'segments' => $this->authEndpointSegments('register'),
             'variables' => [],
         ];
 
@@ -877,8 +1079,16 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         if (array_key_exists('password', $payload)) {
-            $payload['password'] = 'password';
-            $payload['password_confirmation'] = $payload['password'];
+            $password = is_string($payload['password']) && $payload['password'] !== ''
+                ? $payload['password']
+                : 'Password123!';
+
+            if (strlen($password) < 12) {
+                $password .= str_repeat('1', 12 - strlen($password));
+            }
+
+            $payload['password'] = $password;
+            $payload['password_confirmation'] = $password;
         }
 
         if (! array_key_exists('device_name', $payload)) {
@@ -890,9 +1100,9 @@ class PostmanLayerGenerator implements LayerGenerator
 
     private function buildProfileRequest(string $apiPrefix): array
     {
-        $path = '/auth/me';
+        $path = $this->authEndpoint('me');
         $pathDetails = [
-            'segments' => ['auth', 'me'],
+            'segments' => $this->authEndpointSegments('me'),
             'variables' => [],
         ];
 
@@ -908,9 +1118,9 @@ class PostmanLayerGenerator implements LayerGenerator
 
     private function buildLogoutRequest(string $apiPrefix): array
     {
-        $path = '/auth/logout';
+        $path = $this->authEndpoint('logout');
         $pathDetails = [
-            'segments' => ['auth', 'logout'],
+            'segments' => $this->authEndpointSegments('logout'),
             'variables' => [],
         ];
 
@@ -922,6 +1132,43 @@ class PostmanLayerGenerator implements LayerGenerator
                 'url' => $this->buildUrlContext($path, $pathDetails, $apiPrefix),
             ],
         ]);
+    }
+
+    private function authEndpoint(string $suffix): string
+    {
+        $base = '/auth';
+
+        if ($this->tenancyContext?->mode === 'tenant' || ($this->tenancyContext?->appliesToTenant ?? false) && ! ($this->tenancyContext?->appliesToCentral ?? false)) {
+            $base = '/auth/tenant';
+        }
+
+        $base = rtrim($base, '/');
+
+        if ($suffix === '') {
+            return $base;
+        }
+
+        return $base . '/' . ltrim($suffix, '/');
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function authEndpointSegments(string $suffix): array
+    {
+        $segments = ['auth'];
+
+        if ($this->tenancyContext?->mode === 'tenant' || ($this->tenancyContext?->appliesToTenant ?? false) && ! ($this->tenancyContext?->appliesToCentral ?? false)) {
+            $segments[] = 'tenant';
+        }
+
+        foreach (explode('/', trim($suffix, '/')) as $segment) {
+            if ($segment !== '') {
+                $segments[] = $segment;
+            }
+        }
+
+        return $segments;
     }
 
     private function buildLoginTestScript(): array
@@ -1004,43 +1251,48 @@ class PostmanLayerGenerator implements LayerGenerator
         $lower = Str::lower($name);
         $maxLength = $this->stringLengthFromRules($rules);
 
+        $enumCandidate = $this->enumValueFromRules($rules);
+        if ($enumCandidate !== null) {
+            return $this->applyStringConstraints($enumCandidate, $rules, $maxLength);
+        }
+
         if ($lower === 'remember_token') {
-            return $this->truncateSample('token-placeholder', $maxLength);
+            return $this->applyStringConstraints('token-placeholder', $rules, $maxLength);
         }
 
         if (str_contains($lower, 'email')) {
-            return $this->truncateSample('admin@example.com', $maxLength);
+            return $this->applyStringConstraints('admin@example.com', $rules, $maxLength);
         }
 
         if (str_contains($lower, 'password')) {
-            return $this->truncateSample('password', $maxLength);
+            return $this->applyStringConstraints('Password123!', $rules, $maxLength);
         }
 
         if (str_contains($lower, 'locale')) {
-            return $this->firstValueWithin(self::LOCALE_CANDIDATES, $maxLength, 'en');
+            return $this->applyStringConstraints($this->localeSample($rules), $rules, $maxLength);
         }
 
         if (str_contains($lower, 'timezone')) {
-            return $this->firstValueWithin(self::TIMEZONE_CANDIDATES, $maxLength, 'UTC');
+            return $this->applyStringConstraints($this->firstValueWithin(self::TIMEZONE_CANDIDATES, $maxLength, 'UTC'), $rules, $maxLength);
         }
 
         if (str_contains($lower, 'name')) {
-            return $this->truncateSample('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $maxLength);
+            return $this->applyStringConstraints('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $rules, $maxLength);
         }
 
         if (! $stringLike) {
-            return $this->truncateSample('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $maxLength);
+            return $this->applyStringConstraints('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $rules, $maxLength);
         }
 
         if ($maxLength <= 10) {
-            return $this->truncateSample('value-' . substr(Str::slug($name, '-'), 0, 4), $maxLength);
+            return $this->applyStringConstraints('value-' . substr(Str::slug($name, '-'), 0, 4), $rules, $maxLength);
         }
 
         if ($maxLength <= 60) {
-            return $this->truncateSample('Sample Value', $maxLength);
+            return $this->applyStringConstraints('Sample Value', $rules, $maxLength);
         }
 
-        return $this->truncateSample('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $maxLength);
+        return $this->applyStringConstraints('Sample ' . Str::title(str_replace(['_', '-'], ' ', $name)), $rules, $maxLength);
     }
 
     /**
@@ -1057,6 +1309,23 @@ class PostmanLayerGenerator implements LayerGenerator
         return $this->truncateSample($fallback, $maxLength);
     }
 
+    private function localeSample(array $rules): string
+    {
+        $exact = $this->stringExactLengthFromRules($rules);
+
+        if ($exact !== null) {
+            foreach (self::LOCALE_CANDIDATES as $candidate) {
+                if (strlen($candidate) === $exact) {
+                    return $candidate;
+                }
+            }
+
+            return $this->fitSampleToLength('es-ES', $exact);
+        }
+
+        return $this->firstValueWithin(self::LOCALE_CANDIDATES, $this->stringLengthFromRules($rules), 'en');
+    }
+
     private function truncateSample(string $value, int $maxLength): string
     {
         if ($maxLength <= 0) {
@@ -1066,8 +1335,95 @@ class PostmanLayerGenerator implements LayerGenerator
         if (strlen($value) <= $maxLength) {
             return $value;
         }
-
         return substr($value, 0, $maxLength);
+    }
+
+    private function applyStringConstraints(string $value, array $rules, int $maxLength): string
+    {
+        $exact = $this->stringExactLengthFromRules($rules);
+
+        if ($exact !== null) {
+            return $this->fitSampleToLength($value, $exact);
+        }
+
+        $value = $this->truncateSample($value, $maxLength);
+
+        $min = $this->stringMinLengthFromRules($rules);
+
+        if ($min !== null && $min > 0 && strlen($value) < $min) {
+            $value = $this->fitSampleToLength($value, $min);
+            if ($maxLength > 0) {
+                $value = $this->truncateSample($value, $maxLength);
+            }
+        }
+
+        return $value;
+    }
+
+    private function enumValueFromRules(array $rules): ?string
+    {
+        $raw = $rules['in'] ?? null;
+
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        $values = array_values(array_filter(array_map('trim', explode(',', (string) $raw)), static fn ($value) => $value !== ''));
+
+        return $values[0] ?? null;
+    }
+
+    private function stringExactLengthFromRules(array $rules): ?int
+    {
+        $size = $rules['size'] ?? null;
+
+        if ($size !== null && is_numeric($size)) {
+            $length = (int) $size;
+
+            return $length > 0 ? $length : null;
+        }
+
+        return null;
+    }
+
+    private function stringMinLengthFromRules(array $rules): ?int
+    {
+        $min = $rules['min'] ?? null;
+
+        if ($min !== null && is_numeric($min)) {
+            $length = (int) $min;
+
+            return $length > 0 ? $length : null;
+        }
+
+        return null;
+    }
+
+    private function fitSampleToLength(string $value, int $length): string
+    {
+        if ($length <= 0) {
+            return $value;
+        }
+
+        if ($value === '') {
+            return str_repeat('x', $length);
+        }
+
+        if (strlen($value) === $length) {
+            return $value;
+        }
+
+        if (strlen($value) > $length) {
+            return substr($value, 0, $length);
+        }
+
+        $pattern = $value;
+
+        while (strlen($pattern) < $length) {
+            $pattern .= $value;
+        }
+
+        return substr($pattern, 0, $length);
     }
 
     private function formatDecimalSample(Field $field): string
@@ -1109,6 +1465,12 @@ class PostmanLayerGenerator implements LayerGenerator
      */
     private function stringLengthFromRules(array $rules): int
     {
+        $size = $rules['size'] ?? null;
+
+        if ($size !== null && is_numeric($size)) {
+            return max(1, (int) $size);
+        }
+
         $max = $rules['max'] ?? null;
 
         if ($max !== null && is_numeric($max)) {
@@ -1263,15 +1625,65 @@ class PostmanLayerGenerator implements LayerGenerator
             $mergedVariables[$key] = $value;
         }
 
-        $mergedItems = $this->indexItemsByName($merged['item'] ?? []);
-        $incomingItems = $this->indexItemsByName($incoming['item'] ?? []);
+        $existingItems = is_array($merged['item'] ?? null) ? $merged['item'] : [];
+        $incomingItems = is_array($incoming['item'] ?? null) ? $incoming['item'] : [];
 
-        foreach ($incomingItems as $name => $item) {
-            $mergedItems[$name] = $item;
-        }
+        $incomingTopLevelNames = $this->collectItemNames($incomingItems);
+
+        $mergedItemsMap = $this->mergeItems($existingItems, $incomingItems, 0, 'root');
+        $normalizedItems = $this->normalizeItemOrder($mergedItemsMap, 0, 'root');
 
         $merged['variable'] = array_values($mergedVariables);
-        $merged['item'] = $this->normalizeItemOrder($mergedItems);
+        $merged['item'] = $this->pruneTopLevelContexts($normalizedItems, $incomingTopLevelNames);
+
+        return $merged;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $existingItems
+     * @param array<int, array<string, mixed>> $incomingItems
+     * @return array<string, array<string, mixed>>
+     */
+    private function mergeItems(array $existingItems, array $incomingItems, int $depth, string $parentName): array
+    {
+        $indexed = $this->indexItemsByName($existingItems);
+
+        foreach ($incomingItems as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $name = $item['name'] ?? null;
+
+            if (! is_string($name) || $name === '') {
+                continue;
+            }
+
+            if (isset($indexed[$name])) {
+                $indexed[$name] = $this->mergeItem($indexed[$name], $item, $depth + 1, $name);
+            } else {
+                $indexed[$name] = $item;
+            }
+        }
+
+        return $indexed;
+    }
+
+    private function mergeItem(array $existing, array $incoming, int $depth, string $currentName): array
+    {
+        if (isset($incoming['request'])) {
+            return $incoming;
+        }
+
+        $merged = array_merge($existing, array_diff_key($incoming, ['item' => true]));
+
+        $incomingChildren = $incoming['item'] ?? null;
+
+        if (is_array($incomingChildren)) {
+            $existingChildren = is_array($existing['item'] ?? null) ? $existing['item'] : [];
+            $mergedChildrenMap = $this->mergeItems($existingChildren, $incomingChildren, $depth + 1, $currentName);
+            $merged['item'] = $this->normalizeItemOrder($mergedChildrenMap, $depth + 1, $currentName);
+        }
 
         return $merged;
     }
@@ -1295,7 +1707,9 @@ class PostmanLayerGenerator implements LayerGenerator
                 continue;
             }
 
-            $indexed[$name] = $item;
+            if (! array_key_exists($name, $indexed)) {
+                $indexed[$name] = $item;
+            }
         }
 
         return $indexed;
@@ -1305,23 +1719,97 @@ class PostmanLayerGenerator implements LayerGenerator
      * @param array<string, array<string, mixed>> $items
      * @return array<int, array<string, mixed>>
      */
-    private function normalizeItemOrder(array $items): array
+    private function normalizeItemOrder(array $items, int $depth, string $parentName): array
     {
+        if ($items === []) {
+            return [];
+        }
+
         $ordered = [];
 
-        if (isset($items['Autenticación'])) {
-            $ordered[] = $items['Autenticación'];
+        if ($parentName === 'Auth' && isset($items['Autenticación'])) {
+            $ordered['Autenticación'] = $items['Autenticación'];
             unset($items['Autenticación']);
+        }
+
+        if ($depth === 0) {
+            $priority = ['Central', 'Tenant', 'Shared', 'General'];
+            foreach ($priority as $name) {
+                if (isset($items[$name])) {
+                    $ordered[$name] = $items[$name];
+                    unset($items[$name]);
+                }
+            }
+        }
+
+        if (in_array($parentName, ['Central', 'Tenant', 'Shared', 'General'], true)) {
+            $modulePriority = ['Auth', 'Tenancy', 'Hr'];
+            foreach ($modulePriority as $name) {
+                if (isset($items[$name])) {
+                    $ordered[$name] = $items[$name];
+                    unset($items[$name]);
+                }
+            }
         }
 
         if ($items !== []) {
             uksort($items, static fn ($a, $b): int => strcasecmp((string) $a, (string) $b));
-            foreach ($items as $item) {
-                $ordered[] = $item;
+            foreach ($items as $name => $item) {
+                $ordered[$name] = $item;
             }
         }
 
-        return $ordered;
+        return array_values($ordered);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @return array<int, string>
+     */
+    private function collectItemNames(array $items): array
+    {
+        $names = [];
+
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $name = $item['name'] ?? null;
+
+            if (! is_string($name) || $name === '') {
+                continue;
+            }
+
+            $names[$name] = true;
+        }
+
+        return array_keys($names);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @param array<int, string> $allowedNames
+     * @return array<int, array<string, mixed>>
+     */
+    private function pruneTopLevelContexts(array $items, array $allowedNames): array
+    {
+        $baseline = ['Central', 'Tenant', 'Shared', 'General'];
+        $allowed = array_unique(array_merge($baseline, $allowedNames));
+
+        return array_values(array_filter($items, static function ($item) use ($allowed): bool {
+            if (! is_array($item)) {
+                return false;
+            }
+
+            $name = $item['name'] ?? null;
+
+            if (! is_string($name) || $name === '') {
+                return false;
+            }
+
+            return in_array($name, $allowed, true);
+        }));
     }
 
     /**
