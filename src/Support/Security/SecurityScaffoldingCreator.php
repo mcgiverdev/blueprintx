@@ -6,9 +6,9 @@ use Illuminate\Filesystem\Filesystem;
 
 class SecurityScaffoldingCreator
 {
-    private const SEEDER_RELATIVE_PATH = 'database/seeders/BlueprintX/Security/SpatieRolesSeeder.php';
+    private const SEEDER_RELATIVE_PATH = 'database/seeders/BlueprintX/Security/RolesSeeder.php';
     private const SEEDER_NAMESPACE = 'Database\\Seeders\\BlueprintX\\Security';
-    private const SEEDER_CLASS = 'SpatieRolesSeeder';
+    private const SEEDER_CLASS = 'RolesSeeder';
 
     public function __construct(private readonly Filesystem $files)
     {
@@ -32,7 +32,7 @@ class SecurityScaffoldingCreator
 
         $shouldRegisterSeeder = $driver === 'spatie' && $matrix !== [];
 
-        $this->ensureSpatieSeeder($shouldRegisterSeeder ? $matrix : []);
+    $this->ensureRolesSeeder($shouldRegisterSeeder ? $matrix : []);
         $this->ensureDatabaseSeederRegistration($shouldRegisterSeeder);
     }
 
@@ -188,7 +188,7 @@ PHP;
     /**
      * @param array<int, array<string, mixed>> $matrix
      */
-    private function ensureSpatieSeeder(array $matrix): void
+    private function ensureRolesSeeder(array $matrix): void
     {
         $path = $this->resolvePath(self::SEEDER_RELATIVE_PATH);
 
@@ -219,14 +219,13 @@ PHP;
     {
         $definitions = $this->exportArray($matrix, 2);
 
-        $template = <<<'PHP'
+    $template = <<<'PHP'
 <?php
 
 namespace %s;
 
 use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
+use Illuminate\Support\Facades\DB;
 
 class %s extends Seeder
 {
@@ -247,11 +246,12 @@ class %s extends Seeder
     /**
      * @param array<int, array{key:string}> $permissions
      * @param array<int, array{key:string,permissions:array<int,string>}> $roles
-     * @return array<int, string>
+     * @return array<string, int>
      */
     private function ensureGuardPermissions(string $guard, array $permissions, array $roles): array
     {
-        $names = [];
+        $table = $this->tableName('permissions');
+        $lookup = [];
 
         foreach ($permissions as $permission) {
             $name = (string) ($permission['key'] ?? '');
@@ -260,8 +260,7 @@ class %s extends Seeder
                 continue;
             }
 
-            Permission::findOrCreate($name, $guard);
-            $names[] = $name;
+            $lookup[$name] = $this->ensurePermissionRow($table, $guard, $name);
         }
 
         foreach ($roles as $role) {
@@ -272,23 +271,24 @@ class %s extends Seeder
                     continue;
                 }
 
-                Permission::findOrCreate($permissionName, $guard);
-                $names[] = $permissionName;
+                $lookup[$permissionName] = $this->ensurePermissionRow($table, $guard, $permissionName);
             }
         }
 
-        $names = array_values(array_unique($names));
-        sort($names);
+        ksort($lookup);
 
-        return $names;
+        return $lookup;
     }
 
     /**
      * @param array<int, array{key:string,permissions:array<int,string>}> $roles
-     * @param array<int, string> $availablePermissions
+     * @param array<string, int> $availablePermissions
      */
     private function syncGuardRoles(string $guard, array $roles, array $availablePermissions): void
     {
+        $roleTable = $this->tableName('roles');
+        $pivotTable = $this->tableName('role_has_permissions');
+
         foreach ($roles as $roleDefinition) {
             $name = (string) ($roleDefinition['key'] ?? '');
 
@@ -296,23 +296,121 @@ class %s extends Seeder
                 continue;
             }
 
-            $role = Role::findOrCreate($name, $guard);
+            $roleId = $this->ensureRoleRow($roleTable, $guard, $name);
             $permissions = array_map(static fn ($value) => (string) $value, $roleDefinition['permissions'] ?? []);
 
-            if (in_array('*', $permissions, true)) {
-                $role->syncPermissions($availablePermissions);
+            if ($permissions === []) {
+                $this->syncRolePermissions($pivotTable, $roleId, []);
 
                 continue;
             }
 
-            $filtered = array_values(array_intersect($availablePermissions, $permissions));
-            $role->syncPermissions($filtered);
+            if (in_array('*', $permissions, true)) {
+                $this->syncRolePermissions($pivotTable, $roleId, array_values($availablePermissions));
+
+                continue;
+            }
+
+            $selected = [];
+
+            foreach ($permissions as $permissionName) {
+                if (isset($availablePermissions[$permissionName])) {
+                    $selected[] = $availablePermissions[$permissionName];
+                }
+            }
+
+            $this->syncRolePermissions($pivotTable, $roleId, $selected);
         }
+    }
+
+    private function ensurePermissionRow(string $table, string $guard, string $name): int
+    {
+        $existing = DB::table($table)
+            ->where('name', $name)
+            ->where('guard_name', $guard)
+            ->first();
+
+        if ($existing !== null && isset($existing->id)) {
+            return (int) $existing->id;
+        }
+
+        $timestamp = now();
+
+        return (int) DB::table($table)->insertGetId([
+            'name' => $name,
+            'guard_name' => $guard,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+    }
+
+    private function ensureRoleRow(string $table, string $guard, string $name): int
+    {
+        $existing = DB::table($table)
+            ->where('name', $name)
+            ->where('guard_name', $guard)
+            ->first();
+
+        if ($existing !== null && isset($existing->id)) {
+            return (int) $existing->id;
+        }
+
+        $timestamp = now();
+
+        return (int) DB::table($table)->insertGetId([
+            'name' => $name,
+            'guard_name' => $guard,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+    }
+
+    /**
+     * @param array<int, int> $permissionIds
+     */
+    private function syncRolePermissions(string $table, int $roleId, array $permissionIds): void
+    {
+        DB::table($table)->where('role_id', $roleId)->delete();
+
+        $permissionIds = array_values(array_unique($permissionIds));
+
+        if ($permissionIds === []) {
+            return;
+        }
+
+        $rows = [];
+
+        foreach ($permissionIds as $permissionId) {
+            $rows[] = [
+                'role_id' => $roleId,
+                'permission_id' => $permissionId,
+            ];
+        }
+
+        DB::table($table)->insert($rows);
+    }
+
+    private function tableName(string $key): string
+    {
+        $tables = config('permission.table_names', []);
+
+        if (is_array($tables) && isset($tables[$key])) {
+            return (string) $tables[$key];
+        }
+
+        return match ($key) {
+            'permissions' => 'permissions',
+            'roles' => 'roles',
+            'model_has_permissions' => 'model_has_permissions',
+            'model_has_roles' => 'model_has_roles',
+            'role_has_permissions' => 'role_has_permissions',
+            default => $key,
+        };
     }
 }
 
 PHP;
-    return sprintf($template, self::SEEDER_NAMESPACE, self::SEEDER_CLASS, $definitions);
+        return sprintf($template, self::SEEDER_NAMESPACE, self::SEEDER_CLASS, $definitions);
     }
 
     private function ensureDatabaseSeederRegistration(bool $register): void
