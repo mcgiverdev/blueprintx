@@ -13,6 +13,8 @@ use BlueprintX\Kernel\History\GenerationHistoryManager;
 use BlueprintX\Kernel\Generation\PipelineResult;
 use BlueprintX\Kernel\GenerationPipeline;
 use BlueprintX\Support\Auth\AuthScaffoldingCreator;
+use BlueprintX\Support\Security\SecurityConfigNormalizer;
+use BlueprintX\Support\Security\SecurityScaffoldingCreator;
 use BlueprintX\Support\Tenancy\TenancyScaffoldingCreator;
 use BlueprintX\Validation\ValidationMessage;
 use Illuminate\Console\Command;
@@ -20,6 +22,8 @@ use Illuminate\Support\Str;
 use Throwable;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Process\Process;
+use Symfony\Component\Yaml\Exception\ParseException;
+use Symfony\Component\Yaml\Yaml;
 
 class GenerateBlueprintsCommand extends Command
 {
@@ -52,6 +56,7 @@ SIGNATURE;
         private readonly AuthScaffoldingCreator $authScaffolding,
         private readonly TenancyScaffoldingCreator $tenancyScaffolding,
         private readonly GenerationHistoryManager $history,
+        private readonly SecurityScaffoldingCreator $securityScaffolding,
     ) {
         parent::__construct();
     }
@@ -72,6 +77,16 @@ SIGNATURE;
     private array $tenancyDriverInstallQueue = [];
 
     private bool $tenancyFeatureDisabledWarning = false;
+
+    /**
+     * @var array<string, mixed>
+     */
+    private array $securityGlobalConfig = [];
+
+    /**
+     * @var array<string, array<string, array<string, mixed>>>
+     */
+    private array $securityGuardMatrix = [];
 
     public function handle(): int
     {
@@ -156,6 +171,9 @@ SIGNATURE;
 
             return self::FAILURE;
         }
+
+        $this->securityGlobalConfig = $this->loadGlobalSecurityConfig($blueprintsPath);
+        $this->initializeSecurityAggregation($this->securityGlobalConfig);
 
         $withOpenApiOption = (bool) $this->option('with-openapi');
         $withoutOpenApiOption = (bool) $this->option('without-openapi');
@@ -318,8 +336,14 @@ SIGNATURE;
                     );
                 }
             }
+                $securityContext = $this->buildSecurityContext($blueprint);
+                $this->collectSecurityDefinitions($blueprint, $securityContext);
 
-            $pipelineOptions = [
+                $blueprintOptions = $pipelineOptions;
+                $blueprintOptions['security'] = $securityContext;
+
+                try {
+                    $result = $this->pipeline->generate($blueprint, $blueprintOptions);
                 'dry_run' => $dryRun,
                 'force' => $force,
                 'with_openapi' => $withOpenApi,
@@ -480,6 +504,15 @@ SIGNATURE;
             }
         }
 
+        $securityMatrix = $this->finalizeSecurityMatrix();
+
+        $this->securityScaffolding->ensure([
+            'driver' => $this->securityGlobalConfig['roles']['driver'] ?? 'none',
+            'matrix' => $securityMatrix,
+            'dry_run' => $dryRun,
+            'force' => $force,
+        ]);
+
         $totalProcessed = $summary['written'] + $summary['overwritten'] + $summary['skipped'] + $summary['preview'];
         $parts = [];
 
@@ -512,6 +545,432 @@ SIGNATURE;
         }
 
         return self::SUCCESS;
+    }
+
+    private function finalizeSecurityMatrix(): array
+    {
+        $matrix = [];
+
+        foreach ($this->securityGuardMatrix as $guard => $definitions) {
+            $roles = [];
+
+            foreach ($definitions['roles'] ?? [] as $role) {
+                $roles[] = [
+                    'key' => $role['key'],
+                    'permissions' => array_values(array_unique($role['permissions'] ?? [])),
+                ];
+            }
+
+            $permissions = [];
+
+            foreach ($definitions['permissions'] ?? [] as $permission) {
+                $permissions[] = [
+                    'key' => $permission['key'],
+                ];
+            }
+
+            if ($roles === [] && $permissions === []) {
+                continue;
+            }
+
+            $matrix[] = [
+                'guard' => $guard,
+                'roles' => $roles,
+                'permissions' => $permissions,
+            ];
+        }
+
+        return $matrix;
+    }
+
+    private function loadGlobalSecurityConfig(string $blueprintsPath): array
+    {
+        $candidates = [
+            $blueprintsPath . DIRECTORY_SEPARATOR . 'blueprint.yaml',
+            $blueprintsPath . DIRECTORY_SEPARATOR . 'blueprint.yml',
+        ];
+
+        $data = null;
+        $source = null;
+
+        foreach ($candidates as $candidate) {
+            if (! is_file($candidate)) {
+                continue;
+            }
+
+            try {
+                $parsed = Yaml::parseFile($candidate, Yaml::PARSE_EXCEPTION_ON_INVALID_TYPE);
+            } catch (ParseException $exception) {
+                $this->warn(sprintf('No se pudo parsear "%s": %s', basename($candidate), $exception->getMessage()));
+
+                continue;
+            }
+
+            if (! is_array($parsed)) {
+                $this->warn(sprintf('El archivo de configuración global "%s" debe ser un arreglo.', basename($candidate)));
+
+                continue;
+            }
+
+            $data = $parsed;
+            $source = $candidate;
+
+            break;
+        }
+
+        if ($data === null) {
+            return [
+                'roles' => SecurityConfigNormalizer::normalizeRolesConfig(null, null, 'none'),
+            ];
+        }
+
+        $warnings = [];
+
+        $security = SecurityConfigNormalizer::normalizeSecurity(
+            $data['security'] ?? null,
+            function (string $message) use (&$warnings, $source): void {
+                $warnings[] = sprintf('%s: %s', basename((string) $source), $message);
+            },
+            'none'
+        );
+
+        foreach ($warnings as $warning) {
+            $this->warn('  [security] ' . $warning);
+        }
+
+        if (! isset($security['roles'])) {
+            $security['roles'] = SecurityConfigNormalizer::normalizeRolesConfig(null, null, 'none');
+        }
+
+        return $security;
+    }
+
+    private function initializeSecurityAggregation(array $config): void
+    {
+        $this->securityGuardMatrix = [];
+
+        $rolesConfig = $config['roles'] ?? [];
+
+        foreach ($rolesConfig['roles'] ?? [] as $role) {
+            if (! is_array($role) || ! isset($role['key'])) {
+                continue;
+            }
+
+            $this->upsertRoleDefinition($role['guard'] ?? null, $role, 'global');
+        }
+
+        foreach ($rolesConfig['permissions'] ?? [] as $permission) {
+            if (! is_array($permission) || ! isset($permission['key'])) {
+                continue;
+            }
+
+            $this->upsertPermissionDefinition($permission['guard'] ?? null, $permission, 'global');
+        }
+    }
+
+    private function buildSecurityContext(Blueprint $blueprint): array
+    {
+        $blueprintSecurity = $blueprint->security();
+        $blueprintRolesConfig = is_array($blueprintSecurity['roles'] ?? null)
+            ? $blueprintSecurity['roles']
+            : [];
+
+        $globalRolesConfig = $this->securityGlobalConfig['roles'] ?? [];
+
+        $driver = $this->resolveRoleDriver(
+            $globalRolesConfig['driver'] ?? 'none',
+            $blueprintRolesConfig['driver'] ?? 'inherit'
+        );
+
+        $infer = array_key_exists('infer_permissions_from_crud', $blueprintRolesConfig)
+            ? (bool) $blueprintRolesConfig['infer_permissions_from_crud']
+            : ($globalRolesConfig['infer_permissions_from_crud'] ?? true);
+
+        $definitions = isset($blueprintRolesConfig['roles']) && is_array($blueprintRolesConfig['roles'])
+            ? $blueprintRolesConfig['roles']
+            : [];
+
+        $permissions = isset($blueprintRolesConfig['permissions']) && is_array($blueprintRolesConfig['permissions'])
+            ? $blueprintRolesConfig['permissions']
+            : [];
+
+        $middlewareRoles = $this->extractMiddlewareRoles($blueprint);
+        $guard = $this->determineBlueprintGuard($blueprint);
+
+        return [
+            'roles' => [
+                'driver' => $driver,
+                'infer_permissions_from_crud' => $infer,
+                'definitions' => $definitions,
+                'permissions' => $permissions,
+                'middleware' => $middlewareRoles,
+                'guard' => $guard,
+            ],
+        ];
+    }
+
+    private function collectSecurityDefinitions(Blueprint $blueprint, array $securityContext): void
+    {
+        if (! isset($securityContext['roles']) || ! is_array($securityContext['roles'])) {
+            return;
+        }
+
+        $rolesConfig = $securityContext['roles'];
+        $driver = strtolower((string) ($rolesConfig['driver'] ?? 'none'));
+
+        if ($driver !== 'spatie') {
+            return;
+        }
+
+        $guard = is_string($rolesConfig['guard'] ?? null)
+            ? $rolesConfig['guard']
+            : $this->determineBlueprintGuard($blueprint);
+
+        foreach ($rolesConfig['definitions'] ?? [] as $definition) {
+            if (! is_array($definition) || ! isset($definition['key'])) {
+                continue;
+            }
+
+            $this->upsertRoleDefinition($definition['guard'] ?? $guard, $definition, 'blueprint');
+        }
+
+        foreach ($rolesConfig['permissions'] ?? [] as $permission) {
+            if (! is_array($permission) || ! isset($permission['key'])) {
+                continue;
+            }
+
+            $this->upsertPermissionDefinition($permission['guard'] ?? $guard, $permission, 'blueprint');
+        }
+
+        foreach ($rolesConfig['middleware'] ?? [] as $roleKey) {
+            if (! is_string($roleKey) || $roleKey === '') {
+                continue;
+            }
+
+            $this->upsertRoleDefinition($guard, [
+                'key' => $roleKey,
+                'permissions' => ['*'],
+            ], 'middleware');
+        }
+
+        if (! empty($rolesConfig['infer_permissions_from_crud'])) {
+            $inferredPermissions = $this->inferPermissionsFromBlueprint($blueprint);
+
+            foreach ($inferredPermissions as $permissionKey) {
+                $this->upsertPermissionDefinition($guard, [
+                    'key' => $permissionKey,
+                ], 'inferred');
+            }
+        }
+    }
+
+    private function resolveRoleDriver(mixed $global, mixed $blueprint): string
+    {
+        $globalDriver = is_string($global) ? strtolower($global) : 'none';
+
+        if (! in_array($globalDriver, ['none', 'spatie'], true)) {
+            $globalDriver = 'none';
+        }
+
+        $blueprintDriver = is_string($blueprint) ? strtolower($blueprint) : 'inherit';
+
+        if ($blueprintDriver === 'inherit' || $blueprintDriver === '') {
+            return $globalDriver;
+        }
+
+        if (in_array($blueprintDriver, ['none', 'spatie'], true)) {
+            return $blueprintDriver;
+        }
+
+        return $globalDriver;
+    }
+
+    private function determineBlueprintGuard(Blueprint $blueprint): string
+    {
+        $tenancy = $blueprint->tenancy();
+        $mode = strtolower((string) ($tenancy['mode'] ?? ''));
+
+        return match ($mode) {
+            'tenant' => 'tenant',
+            default => 'central',
+        };
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function extractMiddlewareRoles(Blueprint $blueprint): array
+    {
+        $roles = [];
+
+        foreach ($blueprint->apiMiddleware() as $middleware) {
+            if (! is_string($middleware)) {
+                continue;
+            }
+
+            $normalized = trim($middleware);
+
+            if ($normalized === '' || $normalized === 'role') {
+                continue;
+            }
+
+            if (! str_starts_with($normalized, 'role:')) {
+                continue;
+            }
+
+            $payload = substr($normalized, strlen('role:'));
+            $tokens = preg_split('/[,|]/', $payload) ?: [];
+
+            foreach ($tokens as $token) {
+                $role = trim($token);
+
+                if ($role === '') {
+                    continue;
+                }
+
+                if (! in_array($role, $roles, true)) {
+                    $roles[] = $role;
+                }
+            }
+        }
+
+        return $roles;
+    }
+
+    private function upsertRoleDefinition(?string $guard, array $definition, string $source): void
+    {
+        if (! isset($definition['key']) || ! is_string($definition['key'])) {
+            return;
+        }
+
+        $guardKey = $this->normalizeGuardName($guard);
+        $roleKey = strtolower($definition['key']);
+
+        if (! isset($this->securityGuardMatrix[$guardKey])) {
+            $this->securityGuardMatrix[$guardKey] = [
+                'roles' => [],
+                'permissions' => [],
+            ];
+        }
+
+        if (! isset($this->securityGuardMatrix[$guardKey]['roles'][$roleKey])) {
+            $this->securityGuardMatrix[$guardKey]['roles'][$roleKey] = [
+                'key' => $definition['key'],
+                'permissions' => [],
+                'sources' => [],
+            ];
+        }
+
+        $entry = &$this->securityGuardMatrix[$guardKey]['roles'][$roleKey];
+
+        foreach (($definition['permissions'] ?? []) as $permissionKey) {
+            if (! is_string($permissionKey) || $permissionKey === '') {
+                continue;
+            }
+
+            if (! in_array($permissionKey, $entry['permissions'], true)) {
+                $entry['permissions'][] = $permissionKey;
+            }
+        }
+
+        if (! in_array($source, $entry['sources'], true)) {
+            $entry['sources'][] = $source;
+        }
+    }
+
+    private function upsertPermissionDefinition(?string $guard, array $definition, string $source): void
+    {
+        if (! isset($definition['key']) || ! is_string($definition['key'])) {
+            return;
+        }
+
+        $guardKey = $this->normalizeGuardName($guard);
+        $permissionKey = strtolower($definition['key']);
+
+        if (! isset($this->securityGuardMatrix[$guardKey])) {
+            $this->securityGuardMatrix[$guardKey] = [
+                'roles' => [],
+                'permissions' => [],
+            ];
+        }
+
+        if (! isset($this->securityGuardMatrix[$guardKey]['permissions'][$permissionKey])) {
+            $this->securityGuardMatrix[$guardKey]['permissions'][$permissionKey] = [
+                'key' => $definition['key'],
+                'sources' => [],
+            ];
+        }
+
+        if (! in_array($source, $this->securityGuardMatrix[$guardKey]['permissions'][$permissionKey]['sources'], true)) {
+            $this->securityGuardMatrix[$guardKey]['permissions'][$permissionKey]['sources'][] = $source;
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function inferPermissionsFromBlueprint(Blueprint $blueprint): array
+    {
+        $prefix = $this->derivePermissionPrefix($blueprint);
+
+        if ($prefix === '') {
+            return [];
+        }
+
+        $permissions = [
+            $prefix . '.index',
+            $prefix . '.show',
+            $prefix . '.store',
+            $prefix . '.update',
+            $prefix . '.destroy',
+        ];
+
+        foreach ($blueprint->endpoints() as $endpoint) {
+            $type = strtolower($endpoint->type);
+
+            if ($type === 'search') {
+                $permissions[] = $prefix . '.search';
+            } elseif ($type === 'bulk') {
+                $permissions[] = $prefix . '.bulk';
+            } elseif ($type === 'export') {
+                $permissions[] = $prefix . '.export';
+            }
+        }
+
+        return array_values(array_unique($permissions));
+    }
+
+    private function derivePermissionPrefix(Blueprint $blueprint): string
+    {
+        $segments = [];
+        $module = $blueprint->module();
+
+        if (is_string($module) && $module !== '') {
+            $parts = array_filter(explode('\\', $module));
+
+            foreach ($parts as $part) {
+                $slug = Str::slug($part, '-');
+
+                if ($slug !== '') {
+                    $segments[] = str_replace('-', '.', $slug);
+                }
+            }
+        }
+
+        $entitySlug = Str::slug($blueprint->entity(), '-');
+
+        if ($entitySlug !== '') {
+            $segments[] = str_replace('-', '.', $entitySlug);
+        }
+
+        return implode('.', $segments);
+    }
+
+    private function normalizeGuardName(?string $guard): string
+    {
+        $normalized = is_string($guard) ? strtolower(trim($guard)) : '';
+
+        return $normalized !== '' ? $normalized : 'central';
     }
 
     private function renderSanctumReminder(): void

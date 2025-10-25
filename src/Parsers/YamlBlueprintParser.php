@@ -5,6 +5,7 @@ namespace BlueprintX\Parsers;
 use BlueprintX\Blueprint\Blueprint;
 use BlueprintX\Contracts\BlueprintParser;
 use BlueprintX\Exceptions\BlueprintParseException;
+use BlueprintX\Support\Security\SecurityConfigNormalizer;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Symfony\Component\Yaml\Exception\ParseException;
@@ -91,7 +92,8 @@ class YamlBlueprintParser implements BlueprintParser
     *     docs:array<string,mixed>,
     *     errors:array<int,array<string,mixed>>,
     *     metadata:array<string,mixed>,
-    *     tenancy:array<string,mixed>
+    *     tenancy:array<string,mixed>,
+    *     security:array<string,mixed>
      * }
      */
     private function normalize(array $data, string $fullPath): array
@@ -144,6 +146,13 @@ class YamlBlueprintParser implements BlueprintParser
         }
 
         $tenancy = $this->normalizeTenancy(Arr::get($data, 'tenancy', null));
+        $security = SecurityConfigNormalizer::normalizeSecurity(
+            $data['security'] ?? null,
+            function (string $message) use ($fullPath): void {
+                throw new BlueprintParseException(sprintf('El blueprint "%s" tiene una configuración de seguridad inválida: %s', $fullPath, $message));
+            },
+            'inherit'
+        );
 
         return [
             'path' => $fullPath,
@@ -164,6 +173,7 @@ class YamlBlueprintParser implements BlueprintParser
             'errors' => $errors,
             'metadata' => $metadata,
             'tenancy' => $tenancy,
+            'security' => $security,
         ];
     }
 

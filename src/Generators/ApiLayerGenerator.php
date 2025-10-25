@@ -1585,7 +1585,7 @@ PHP;
 
     private function roleMiddlewareProviderStub(): string
     {
-    return <<<'PHP'
+        return <<<'PHP'
 <?php
 
 namespace App\Providers;
@@ -1598,8 +1598,20 @@ class RoleMiddlewareServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-    $router = $this->app->make(Router::class);
-    $router->aliasMiddleware('role', EnsureUserHasRole::class);
+        $driver = config('blueprintx-security.roles.driver');
+
+        if (! is_string($driver) || $driver === '' || strtolower($driver) === 'auto') {
+            $driver = config('blueprintx-security.roles.auto_detected', 'none');
+        }
+
+        $driver = is_string($driver) ? strtolower($driver) : 'none';
+
+        if ($driver === 'spatie') {
+            return;
+        }
+
+        $router = $this->app->make(Router::class);
+        $router->aliasMiddleware('role', EnsureUserHasRole::class);
     }
 }
 

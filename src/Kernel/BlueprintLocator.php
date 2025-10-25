@@ -47,6 +47,11 @@ class BlueprintLocator
             $relative = ltrim(str_replace('\\', '/', substr($file->getPathname(), strlen($basePath))), '/');
             $relativeLower = Str::lower($relative);
 
+            $relativeNormalized = ltrim($relativeLower, '/');
+            if (in_array($relativeNormalized, ['blueprint.yaml', 'blueprint.yml'], true)) {
+                continue;
+            }
+
             if ($normalizedModule !== null) {
                 $moduleLower = Str::lower($normalizedModule) . '/';
                 if (! str_starts_with($relativeLower, $moduleLower)) {

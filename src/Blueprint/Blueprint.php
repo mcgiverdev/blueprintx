@@ -13,6 +13,7 @@ class Blueprint
      * @param array<int, array<string, mixed>> $errors
      * @param array<string, mixed> $metadata
      * @param array<string, mixed> $tenancy
+     * @param array<string, mixed> $security
      * @param array<int, string> $middleware
      */
     public function __construct(
@@ -32,6 +33,7 @@ class Blueprint
         private readonly array $errors,
         private readonly array $metadata,
         private readonly array $tenancy,
+        private readonly array $security,
     ) {
     }
 
@@ -49,7 +51,8 @@ class Blueprint
     *     docs:array<string,mixed>,
     *     errors:array<int,array<string,mixed>>,
     *     metadata:array<string,mixed>,
-    *     tenancy?:array<string,mixed>
+    *     tenancy?:array<string,mixed>,
+    *     security?:array<string,mixed>
      * } $data
      */
     public static function fromArray(array $data): self
@@ -60,6 +63,11 @@ class Blueprint
         $tenancy = $data['tenancy'] ?? [];
         if (! is_array($tenancy)) {
             $tenancy = [];
+        }
+
+        $security = $data['security'] ?? [];
+        if (! is_array($security)) {
+            $security = [];
         }
 
         return new self(
@@ -79,6 +87,7 @@ class Blueprint
             $data['errors'],
             $data['metadata'],
             $tenancy,
+            $security,
         );
     }
 
@@ -184,6 +193,14 @@ class Blueprint
         return $this->tenancy;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function security(): array
+    {
+        return $this->security;
+    }
+
     public function toArray(): array
     {
         return [
@@ -205,6 +222,7 @@ class Blueprint
             'errors' => $this->schemaErrors(),
             'metadata' => $this->metadata,
             'tenancy' => $this->tenancy,
+            'security' => $this->security,
         ];
     }
 
