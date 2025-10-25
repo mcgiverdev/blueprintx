@@ -146,7 +146,8 @@ trait ResolvesModelNamespaces
 			return null;
 		}
 
-		$trimmed = str_replace(['App\\Domain\\', 'App/Domain/'], '', $trimmed);
+	$trimmed = str_replace(['App\\Domain\\', 'App/Domain/'], '', $trimmed);
+	$trimmed = str_replace('_', '/', $trimmed);
 		$trimmed = trim($trimmed, '\\/');
 
 		if ($trimmed === '') {

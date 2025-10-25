@@ -171,6 +171,82 @@ class DatabaseLayerGeneratorTest extends TestCase
         $this->assertStringContainsString('use Illuminate\\Support\\Str;', $factory->contents);
     }
 
+    public function test_it_generates_central_admin_module_seeder_with_preset(): void
+    {
+        $engine = $this->makeTemplateEngine();
+        $driver = $this->makeHexagonalDriver();
+        $this->registerDriverNamespaces($engine, $driver);
+
+        $generator = new DatabaseLayerGenerator($engine);
+        $blueprint = Blueprint::fromArray([
+            'path' => 'blueprints/central/auth/user.yaml',
+            'module' => 'central_auth',
+            'entity' => 'User',
+            'table' => 'users',
+            'architecture' => 'hexagonal',
+            'tenancy' => [
+                'mode' => 'central',
+                'storage' => 'central',
+                'connection' => 'central',
+                'routing_scope' => 'central',
+                'seed_scope' => 'central',
+            ],
+            'fields' => [
+                ['name' => 'id', 'type' => 'uuid'],
+                ['name' => 'name', 'type' => 'string', 'rules' => 'required|string|max:120'],
+                ['name' => 'email', 'type' => 'string', 'rules' => 'required|email|max:190|unique:users,email'],
+                ['name' => 'password', 'type' => 'string', 'rules' => 'required|string|min:12|max:190'],
+                ['name' => 'status', 'type' => 'string', 'rules' => 'required|string|in:pending,active,suspended'],
+                ['name' => 'timezone', 'type' => 'string', 'rules' => 'nullable|string|max:60'],
+                ['name' => 'locale', 'type' => 'string', 'rules' => 'nullable|string|size:5'],
+                ['name' => 'last_login_at', 'type' => 'datetime', 'rules' => 'nullable|date'],
+                ['name' => 'remember_token', 'type' => 'string', 'rules' => 'nullable|string|max:100'],
+            ],
+            'relations' => [],
+            'options' => [
+                'timestamps' => true,
+                'softDeletes' => true,
+                'audited' => true,
+                'seeders' => [
+                    'count' => 10,
+                    'preset' => 'central_admin',
+                    'admin' => [
+                        'name' => 'Super Admin',
+                        'email' => 'admin@example.com',
+                        'password' => 'change-me-now',
+                        'status' => 'active',
+                        'role' => 'super-admin',
+                        'guard' => 'central',
+                        'remember_token_length' => 20,
+                    ],
+                ],
+            ],
+            'api' => [
+                'base_path' => '/auth/users',
+                'middleware' => ['auth:sanctum', 'role:super-admin'],
+                'endpoints' => [],
+            ],
+            'docs' => [],
+            'errors' => [],
+            'metadata' => [],
+        ]);
+
+    $result = $generator->generate($blueprint, $driver);
+
+        $moduleSeeder = $this->findFileBySuffix($result->files(), 'database/seeders/Central/AuthSeeder.php');
+
+        $this->assertNotNull($moduleSeeder, 'Se esperaba el seeder de módulo generado.');
+
+        $contents = $moduleSeeder->contents;
+
+        $this->assertStringContainsString("DB::table('users')", $contents);
+        $this->assertStringContainsString("Hash::make('change-me-now')", $contents);
+        $this->assertStringContainsString("->where('email', 'admin@example.com')", $contents);
+        $this->assertStringContainsString("User::factory()->count(9)->create()", $contents);
+        $this->assertStringContainsString('private function assignRole', $contents);
+        $this->assertStringContainsString("config('permission.table_names')", $contents);
+    }
+
     private function makeTemplateEngine(): TemplateEngine
     {
         return new TemplateEngine([], ['debug' => false, 'cache' => false]);

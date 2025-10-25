@@ -1742,6 +1742,12 @@ class DatabaseLayerGenerator implements LayerGenerator
         $seedOptions = is_array($options['seeders'] ?? null) ? $options['seeders'] : [];
         $countOption = is_array($seedOptions) && isset($seedOptions['count']) ? $seedOptions['count'] : null;
         $count = is_numeric($countOption) ? max(1, (int) $countOption) : 10;
+        $preset = $this->normalizeSeederPreset($seedOptions['preset'] ?? null);
+        $presetConfig = null;
+
+        if ($preset === 'central_admin') {
+            $presetConfig = $this->buildCentralAdminPresetConfig($blueprint, $seedOptions, $count);
+        }
 
         $dependencies = [];
 
@@ -1776,12 +1782,78 @@ class DatabaseLayerGenerator implements LayerGenerator
             'model_fqcn' => $modelFqcn,
             'count' => $count,
             'dependencies' => $dependencies,
+            'table' => $this->tableName($blueprint),
         ];
+
+        if ($preset === 'central_admin' && $presetConfig !== null) {
+            $metadata['preset'] = 'central_admin';
+            $metadata['preset_config'] = $presetConfig;
+        }
 
         return [
             'context' => $context,
             'metadata' => $metadata,
         ];
+    }
+
+    private function normalizeSeederPreset(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = Str::of($value)->trim()->lower();
+
+        return $normalized === '' ? null : (string) $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $seedOptions
+     * @return array<string, mixed>
+     */
+    private function buildCentralAdminPresetConfig(Blueprint $blueprint, array $seedOptions, int $count): array
+    {
+        $admin = is_array($seedOptions['admin'] ?? null) ? $seedOptions['admin'] : [];
+
+        $table = is_string($admin['table'] ?? null) && $admin['table'] !== ''
+            ? (string) $admin['table']
+            : $this->tableName($blueprint);
+
+        $factoryCountOption = $admin['factory_count'] ?? ($seedOptions['factory_count'] ?? null);
+        $factoryCount = is_numeric($factoryCountOption)
+            ? max(0, (int) $factoryCountOption)
+            : max(0, $count - 1);
+
+        $rememberTokenLength = is_numeric($admin['remember_token_length'] ?? null)
+            ? max(1, (int) $admin['remember_token_length'])
+            : 20;
+
+        return [
+            'table' => $table,
+            'name' => var_export((string) ($admin['name'] ?? 'Super Admin'), true),
+            'email' => var_export((string) ($admin['email'] ?? 'admin@example.com'), true),
+            'password' => var_export((string) ($admin['password'] ?? 'change-me-now'), true),
+            'status' => var_export((string) ($admin['status'] ?? 'active'), true),
+            'role' => var_export((string) ($admin['role'] ?? 'super-admin'), true),
+            'guard' => var_export((string) ($admin['guard'] ?? 'central'), true),
+            'remember_token_length' => $rememberTokenLength,
+            'factory_count' => $factoryCount,
+            'timezone_expression' => $this->exportSeederExpression($admin['timezone'] ?? null, "config('app.timezone', 'UTC')"),
+            'locale_expression' => $this->exportSeederExpression($admin['locale'] ?? null, "config('app.locale', 'en')"),
+        ];
+    }
+
+    private function exportSeederExpression(mixed $value, string $defaultExpression): string
+    {
+        if (is_string($value) && $value !== '') {
+            return var_export($value, true);
+        }
+
+        if (is_bool($value) || is_int($value) || is_float($value)) {
+            return var_export($value, true);
+        }
+
+        return $defaultExpression;
     }
 
     private function modelFqcn(Blueprint $blueprint): string
@@ -2092,6 +2164,13 @@ class DatabaseLayerGenerator implements LayerGenerator
             'model' => (string) ($metadata['model_fqcn'] ?? $this->modelFqcn($blueprint)),
             'count' => (int) ($metadata['count'] ?? 10),
             'dependencies' => array_values(array_unique($metadata['dependencies'] ?? [])),
+            'table' => is_string($metadata['table'] ?? null) && $metadata['table'] !== ''
+                ? (string) $metadata['table']
+                : null,
+            'preset' => $this->normalizeSeederPreset($metadata['preset'] ?? null),
+            'preset_config' => is_array($metadata['preset_config'] ?? null)
+                ? $metadata['preset_config']
+                : null,
         ];
 
         $this->history = $history;
@@ -2221,23 +2300,89 @@ class DatabaseLayerGenerator implements LayerGenerator
         }
 
         $imports = [];
-        $calls = [];
+        $entries = [];
+        $requiresAssignRole = false;
+        $needsDb = false;
+        $needsHash = false;
+        $needsStr = false;
 
         foreach ($sorted as $meta) {
+            if (! is_array($meta)) {
+                continue;
+            }
+
             $model = (string) ($meta['model'] ?? null);
             if ($model === '') {
                 continue;
             }
 
             $imports[] = $model;
-            $calls[] = [
-                'model_class' => class_basename($model),
+
+            $preset = $this->normalizeSeederPreset($meta['preset'] ?? null);
+            $presetConfig = is_array($meta['preset_config'] ?? null) ? $meta['preset_config'] : [];
+            $modelClass = class_basename($model);
+            $table = is_string($meta['table'] ?? null) && $meta['table'] !== ''
+                ? $meta['table']
+                : Str::snake(Str::pluralStudly($meta['entity'] ?? $modelClass));
+
+            if ($preset === 'central_admin') {
+                $requiresAssignRole = true;
+                $needsDb = true;
+                $needsHash = true;
+                $needsStr = true;
+
+                $factoryCountSource = $presetConfig['factory_count'] ?? null;
+                $factoryCount = is_numeric($factoryCountSource)
+                    ? max(0, (int) $factoryCountSource)
+                    : max(0, ((int) ($meta['count'] ?? 10)) - 1);
+
+                $rememberTokenSource = $presetConfig['remember_token_length'] ?? null;
+                $rememberTokenLength = is_numeric($rememberTokenSource)
+                    ? max(1, (int) $rememberTokenSource)
+                    : 20;
+
+                $entries[] = [
+                    'type' => 'central_admin',
+                    'model_class' => $modelClass,
+                    'table' => is_string($presetConfig['table'] ?? null) && $presetConfig['table'] !== ''
+                        ? (string) $presetConfig['table']
+                        : $table,
+                    'name' => $presetConfig['name'] ?? var_export('Super Admin', true),
+                    'email' => $presetConfig['email'] ?? var_export('admin@example.com', true),
+                    'password' => $presetConfig['password'] ?? var_export('change-me-now', true),
+                    'status' => $presetConfig['status'] ?? var_export('active', true),
+                    'role' => $presetConfig['role'] ?? var_export('super-admin', true),
+                    'guard' => $presetConfig['guard'] ?? var_export('central', true),
+                    'remember_token_length' => $rememberTokenLength,
+                    'factory_count' => $factoryCount,
+                    'timezone_expression' => $presetConfig['timezone_expression'] ?? "config('app.timezone', 'UTC')",
+                    'locale_expression' => $presetConfig['locale_expression'] ?? "config('app.locale', 'en')",
+                ];
+
+                continue;
+            }
+
+            $entries[] = [
+                'type' => 'factory',
+                'model_class' => $modelClass,
                 'count' => (int) ($meta['count'] ?? 10),
             ];
         }
 
-        if ($calls === []) {
+        if ($entries === []) {
             return null;
+        }
+
+        if ($needsDb) {
+            $imports[] = 'Illuminate\\Support\\Facades\\DB';
+        }
+
+        if ($needsHash) {
+            $imports[] = 'Illuminate\\Support\\Facades\\Hash';
+        }
+
+        if ($needsStr) {
+            $imports[] = 'Illuminate\\Support\\Str';
         }
 
         $imports = array_values(array_unique($imports));
@@ -2264,7 +2409,8 @@ class DatabaseLayerGenerator implements LayerGenerator
             'namespace' => $namespace,
             'class_name' => $classSegment . 'Seeder',
             'imports' => $imports,
-            'seed_calls' => $calls,
+            'entries' => $entries,
+            'requires_assign_role' => $requiresAssignRole,
         ];
     }
 
@@ -3702,7 +3848,8 @@ class DatabaseLayerGenerator implements LayerGenerator
             return null;
         }
 
-        $normalized = str_replace('\\', '/', $module);
+    $normalized = str_replace('\\', '/', $module);
+    $normalized = str_replace('_', '/', $normalized);
         $segments = array_filter(array_map('trim', explode('/', $normalized)), static fn (string $part): bool => $part !== '');
 
         if ($segments === []) {

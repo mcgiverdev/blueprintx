@@ -9,7 +9,99 @@ class {{ module_seeder.class_name }} extends Seeder
 {
     public function run(): void
     {
-{% for call in module_seeder.seed_calls %}        {{ call.model_class }}::factory()->count({{ call.count }})->create();
-{% endfor %}
+{% for entry in module_seeder.entries %}{% if entry.type == 'central_admin' %}        $now = now();
+
+        $existing = DB::table('{{ entry.table }}')
+            ->where('email', {{ entry.email }})
+            ->first();
+
+        $base = [
+            'name' => {{ entry.name }},
+            'email' => {{ entry.email }},
+            'password' => Hash::make({{ entry.password }}),
+            'status' => {{ entry.status }},
+            'timezone' => {{ entry.timezone_expression }},
+            'locale' => {{ entry.locale_expression }},
+            'last_login_at' => $now,
+            'email_verified_at' => $now,
+            'remember_token' => Str::random({{ entry.remember_token_length }}),
+            'updated_at' => $now,
+        ];
+
+        if ($existing === null) {
+            $adminId = (string) Str::uuid();
+
+            DB::table('{{ entry.table }}')->insert(array_merge($base, [
+                'id' => $adminId,
+                'created_at' => $now,
+            ]));
+        } else {
+            $adminId = (string) ($existing->id ?? Str::uuid());
+
+            DB::table('{{ entry.table }}')
+                ->where('id', $adminId)
+                ->update($base);
+        }
+
+        $this->assignRole($adminId, {{ entry.model_class }}::class, {{ entry.role }}, {{ entry.guard }});
+{% if entry.factory_count > 0 %}
+
+        {{ entry.model_class }}::factory()->count({{ entry.factory_count }})->create();
+{% endif %}{% else %}        {{ entry.model_class }}::factory()->count({{ entry.count }})->create();
+{% endif %}{% if not loop.last %}
+
+{% endif %}{% endfor %}
     }
+{% if module_seeder.requires_assign_role %}
+
+    private function assignRole(string $modelId, string $modelType, string $roleName, string $guard): void
+    {
+        $roleId = DB::table($this->tableName('roles'))
+            ->where('name', $roleName)
+            ->where('guard_name', $guard)
+            ->value('id');
+
+        if ($roleId === null) {
+            return;
+        }
+
+        $pivotTable = $this->tableName('model_has_roles');
+        $modelKey = $this->modelKey();
+
+        DB::table($pivotTable)->updateOrInsert(
+            [
+                'role_id' => $roleId,
+                'model_type' => $modelType,
+                $modelKey => $modelId,
+            ],
+            [],
+        );
+    }
+
+    private function tableName(string $key): string
+    {
+        $tables = config('permission.table_names');
+
+        if (is_array($tables) && isset($tables[$key])) {
+            return (string) $tables[$key];
+        }
+
+        return match ($key) {
+            'roles' => 'roles',
+            'model_has_roles' => 'model_has_roles',
+            default => $key,
+        };
+    }
+
+    private function modelKey(): string
+    {
+        $columns = config('permission.column_names');
+
+        if (is_array($columns) && isset($columns['model_morph_key'])) {
+            return (string) $columns['model_morph_key'];
+        }
+
+        return 'model_id';
+    }
+{% endif %}
 }
