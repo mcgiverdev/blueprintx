@@ -263,6 +263,7 @@ SIGNATURE;
     $queue = $this->prepareBlueprintQueue($blueprintPaths);
     $authModelBlueprint = $this->findAuthModelBlueprint($queue, $authModelEntity);
     $authModelFields = $this->serializeAuthModelFields($authModelBlueprint);
+    $authRequestEnvelope = $this->resolveAuthRequestEnvelope($authModelBlueprint);
     $sanctumInstalled = $this->isSanctumInstalled();
 
         foreach ($queue as $entry) {
@@ -377,6 +378,7 @@ SIGNATURE;
                         'tenant_base_url' => $postmanTenantBaseUrl,
                         'tenant_header' => $tenancyTenantHeader,
                     ],
+                    'envelope' => $authRequestEnvelope,
                 ],
                 'form_requests' => [
                     'enabled' => $formRequestsEnabled,
@@ -2018,6 +2020,41 @@ SIGNATURE;
         }
 
         return $fields !== [] ? $fields : null;
+    }
+
+    private function resolveAuthRequestEnvelope(?Blueprint $blueprint): ?string
+    {
+        if (! $blueprint instanceof Blueprint) {
+            return null;
+        }
+
+        $options = $blueprint->options();
+
+        if (! is_array($options)) {
+            return null;
+        }
+
+        $api = $options['api'] ?? null;
+
+        if (! is_array($api)) {
+            return null;
+        }
+
+        $requestOptions = $api['request'] ?? null;
+
+        if (! is_array($requestOptions)) {
+            return null;
+        }
+
+        $envelope = $requestOptions['envelope'] ?? null;
+
+        if (! is_string($envelope)) {
+            return null;
+        }
+
+        $trimmed = trim($envelope);
+
+        return $trimmed !== '' ? $trimmed : null;
     }
 
     /**

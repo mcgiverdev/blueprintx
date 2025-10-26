@@ -1200,7 +1200,7 @@ class PostmanLayerGenerator implements LayerGenerator
         ];
     }
 
-    private function buildExamplePayload(Blueprint $blueprint): array
+    private function buildExamplePayload(Blueprint $blueprint): array|object
     {
         $data = [];
 
@@ -1213,10 +1213,10 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         if ($data === []) {
-            return ['data' => new \stdClass()];
+            return new \stdClass();
         }
 
-        return ['data' => $data];
+        return $data;
     }
 
     private function isReadOnlyField(string $name): bool
