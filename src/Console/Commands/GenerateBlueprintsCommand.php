@@ -752,13 +752,20 @@ SIGNATURE;
         $guard = is_string($rolesConfig['guard'] ?? null)
             ? $rolesConfig['guard']
             : $this->determineBlueprintGuard($blueprint);
+        $normalizedDefaultGuard = $this->normalizeGuardName($guard);
 
         foreach ($rolesConfig['definitions'] ?? [] as $definition) {
             if (! is_array($definition) || ! isset($definition['key'])) {
                 continue;
             }
 
-            $this->upsertRoleDefinition($definition['guard'] ?? $guard, $definition, 'blueprint');
+            $targetGuard = $definition['guard'] ?? $guard;
+
+            if ($this->normalizeGuardName($targetGuard) === 'tenant') {
+                continue;
+            }
+
+            $this->upsertRoleDefinition($targetGuard, $definition, 'blueprint');
         }
 
         foreach ($rolesConfig['permissions'] ?? [] as $permission) {
@@ -766,21 +773,29 @@ SIGNATURE;
                 continue;
             }
 
-            $this->upsertPermissionDefinition($permission['guard'] ?? $guard, $permission, 'blueprint');
-        }
+            $targetGuard = $permission['guard'] ?? $guard;
 
-        foreach ($rolesConfig['middleware'] ?? [] as $roleKey) {
-            if (! is_string($roleKey) || $roleKey === '') {
+            if ($this->normalizeGuardName($targetGuard) === 'tenant') {
                 continue;
             }
 
-            $this->upsertRoleDefinition($guard, [
-                'key' => $roleKey,
-                'permissions' => ['*'],
-            ], 'middleware');
+            $this->upsertPermissionDefinition($targetGuard, $permission, 'blueprint');
         }
 
-        if (! empty($rolesConfig['infer_permissions_from_crud'])) {
+        if ($normalizedDefaultGuard !== 'tenant') {
+            foreach ($rolesConfig['middleware'] ?? [] as $roleKey) {
+                if (! is_string($roleKey) || $roleKey === '') {
+                    continue;
+                }
+
+                $this->upsertRoleDefinition($guard, [
+                    'key' => $roleKey,
+                    'permissions' => ['*'],
+                ], 'middleware');
+            }
+        }
+
+        if ($normalizedDefaultGuard !== 'tenant' && ! empty($rolesConfig['infer_permissions_from_crud'])) {
             $inferredPermissions = $this->inferPermissionsFromBlueprint($blueprint);
 
             foreach ($inferredPermissions as $permissionKey) {

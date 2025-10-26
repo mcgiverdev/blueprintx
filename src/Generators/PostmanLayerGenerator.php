@@ -469,7 +469,7 @@ class PostmanLayerGenerator implements LayerGenerator
      * @param array<int, array<string, mixed>> $nodes
      * @return array<int, array<string, mixed>>
      */
-    private function wrapSegments(array $segments, array $nodes): array
+    private function wrapSegments(array $segments, array $nodes, ?string $context = null): array
     {
         if ($nodes === []) {
             return [];
@@ -481,10 +481,71 @@ class PostmanLayerGenerator implements LayerGenerator
 
         $segment = array_shift($segments);
 
+        if ($context === null && $this->shouldFanOutSharedSegment($segment)) {
+            $branches = [];
+
+            foreach ($this->sharedContextTargets() as $target) {
+                $branches = array_merge(
+                    $branches,
+                    $this->wrapSegments(array_merge([$target, $segment], $segments), $nodes, $target)
+                );
+            }
+
+            if ($branches !== []) {
+                return $branches;
+            }
+        }
+
+        $nextContext = $context;
+
+        if ($context === null && $this->isContextSegment($segment)) {
+            $nextContext = $segment;
+        }
+
         return [[
             'name' => $segment,
-            'item' => $this->wrapSegments($segments, $nodes),
+            'item' => $this->wrapSegments($segments, $nodes, $nextContext),
         ]];
+    }
+
+    private function shouldFanOutSharedSegment(string $segment): bool
+    {
+        if (strcasecmp($segment, 'Shared') !== 0) {
+            return false;
+        }
+
+        if ($this->tenancyContext === null) {
+            return false;
+        }
+
+        return $this->tenancyContext->appliesToCentral || $this->tenancyContext->appliesToTenant;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function sharedContextTargets(): array
+    {
+        if ($this->tenancyContext === null) {
+            return ['Shared'];
+        }
+
+        $targets = [];
+
+        if ($this->tenancyContext->appliesToCentral) {
+            $targets[] = 'Central';
+        }
+
+        if ($this->tenancyContext->appliesToTenant) {
+            $targets[] = 'Tenant';
+        }
+
+        return $targets !== [] ? $targets : ['Shared'];
+    }
+
+    private function isContextSegment(string $segment): bool
+    {
+        return in_array(strtolower($segment), ['central', 'tenant', 'shared', 'general'], true);
     }
 
     /**
@@ -1733,7 +1794,7 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         if ($depth === 0) {
-            $priority = ['Central', 'Tenant', 'Shared', 'General'];
+            $priority = ['Central', 'Tenant', 'General'];
             foreach ($priority as $name) {
                 if (isset($items[$name])) {
                     $ordered[$name] = $items[$name];
@@ -1794,7 +1855,7 @@ class PostmanLayerGenerator implements LayerGenerator
      */
     private function pruneTopLevelContexts(array $items, array $allowedNames): array
     {
-        $baseline = ['Central', 'Tenant', 'Shared', 'General'];
+        $baseline = ['Central', 'Tenant', 'General'];
         $allowed = array_unique(array_merge($baseline, $allowedNames));
 
         return array_values(array_filter($items, static function ($item) use ($allowed): bool {
