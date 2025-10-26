@@ -1606,11 +1606,14 @@ class RoleMiddlewareServiceProvider extends ServiceProvider
 
         $driver = is_string($driver) ? strtolower($driver) : 'none';
 
-        if ($driver === 'spatie') {
+        $router = $this->app->make(Router::class);
+
+        if ($driver === 'spatie' && class_exists(\Spatie\Permission\Middlewares\RoleMiddleware::class)) {
+            $router->aliasMiddleware('role', \Spatie\Permission\Middlewares\RoleMiddleware::class);
+
             return;
         }
 
-        $router = $this->app->make(Router::class);
         $router->aliasMiddleware('role', EnsureUserHasRole::class);
     }
 }

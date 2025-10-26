@@ -32,8 +32,9 @@ class SecurityScaffoldingCreator
 
         $shouldRegisterSeeder = $driver === 'spatie' && $matrix !== [];
 
-    $this->ensureRolesSeeder($shouldRegisterSeeder ? $matrix : []);
+        $this->ensureRolesSeeder($shouldRegisterSeeder ? $matrix : []);
         $this->ensureDatabaseSeederRegistration($shouldRegisterSeeder);
+        $this->ensureAuthenticationExceptionRendering();
     }
 
     private function normalizeDriver(mixed $driver): string
@@ -45,6 +46,100 @@ class SecurityScaffoldingCreator
         $normalized = strtolower(trim($driver));
 
         return $normalized === 'spatie' ? 'spatie' : 'none';
+    }
+
+    private function ensureAuthenticationExceptionRendering(): void
+    {
+        $path = $this->resolvePath('bootstrap/app.php');
+
+        if (! $this->files->exists($path)) {
+            return;
+        }
+
+        $contents = $this->files->get($path);
+        $updated = $contents;
+
+        $updated = $this->ensureExceptionUseStatements($updated);
+        $updated = $this->insertAuthenticationExceptionRenderer($updated);
+
+        if ($updated !== $contents) {
+            $this->files->put($path, $updated);
+        }
+    }
+
+    private function ensureExceptionUseStatements(string $contents): string
+    {
+        $needle = 'use Illuminate\Foundation\Configuration\Middleware;';
+
+        if (! str_contains($contents, $needle)) {
+            return $contents;
+        }
+
+        $statements = [
+            'use Illuminate\\Auth\\AuthenticationException;',
+            'use Illuminate\\Contracts\\Container\\BindingResolutionException;',
+        ];
+
+        $insertion = $needle . "\n";
+
+        foreach ($statements as $statement) {
+            if (str_contains($contents, $statement)) {
+                continue;
+            }
+
+            $insertion .= $statement . "\n";
+        }
+
+        if ($insertion === $needle . "\n") {
+            return $contents;
+        }
+
+        return str_replace(
+            $needle . "\n",
+            $insertion,
+            $contents
+        );
+    }
+
+    private function insertAuthenticationExceptionRenderer(string $contents): string
+    {
+        $pattern = '/->withExceptions\\(function \\(Exceptions \\$exceptions\\): void \\\{\\n(?<body>[\\s\\S]*?)\\n    \\\}->create\\(\\);/';
+
+        if (! preg_match($pattern, $contents, $matches, PREG_OFFSET_CAPTURE)) {
+            return $contents;
+        }
+
+        $body = (string) ($matches['body'][0] ?? '');
+
+        $body = preg_replace('/^\s*\/\/\s*$/m', '', $body);
+
+        if (! is_string($body)) {
+            $body = '';
+        }
+
+        $body = trim($body);
+
+        $insertions = [];
+
+        if (! str_contains($body, 'AuthenticationException $exception')) {
+            $insertions[] = "        \\$exceptions->render(function (AuthenticationException \\$exception, \\$request) {\n            return response()->json([\n                'message' => 'Unauthenticated.',\n            ], 401);\n        });";
+        }
+
+        if (! str_contains($body, 'BindingResolutionException $exception')) {
+            $insertions[] = "        \\$exceptions->render(function (BindingResolutionException \\$exception, \\$request) {\n            if (! str_contains((string) \\$exception->getMessage(), 'Target class [role] does not exist.')) {\n                return null;\n            }\n\n            return response()->json([\n                'message' => 'Unauthenticated.',\n            ], 401);\n        });";
+        }
+
+        if ($insertions === []) {
+            return $contents;
+        }
+
+        $newBody = $body === ''
+            ? implode("\n\n", $insertions)
+            : rtrim($body) . "\n\n" . implode("\n\n", $insertions);
+
+        $replacement = "->withExceptions(function (Exceptions \\$exceptions): void {\n" . $newBody . "\n    })->create();";
+
+        return substr_replace($contents, $replacement, $matches[0][1], strlen($matches[0][0]));
     }
 
     /**
