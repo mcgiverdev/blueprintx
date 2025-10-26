@@ -482,17 +482,21 @@ class PostmanLayerGenerator implements LayerGenerator
         $segment = array_shift($segments);
 
         if ($context === null && $this->shouldFanOutSharedSegment($segment)) {
-            $branches = [];
+            $targets = $this->sharedContextTargets();
 
-            foreach ($this->sharedContextTargets() as $target) {
-                $branches = array_merge(
-                    $branches,
-                    $this->wrapSegments(array_merge([$target, $segment], $segments), $nodes, $target)
-                );
-            }
+            if ($targets !== []) {
+                $branches = [];
 
-            if ($branches !== []) {
-                return $branches;
+                foreach ($targets as $target) {
+                    $branches = array_merge(
+                        $branches,
+                        $this->wrapSegments(array_merge([$target], $segments), $nodes, $target)
+                    );
+                }
+
+                if ($branches !== []) {
+                    return $branches;
+                }
             }
         }
 
@@ -526,11 +530,11 @@ class PostmanLayerGenerator implements LayerGenerator
      */
     private function sharedContextTargets(): array
     {
-        if ($this->tenancyContext === null) {
-            return ['Shared'];
-        }
-
         $targets = [];
+
+        if ($this->tenancyContext === null) {
+            return $targets;
+        }
 
         if ($this->tenancyContext->appliesToCentral) {
             $targets[] = 'Central';
@@ -540,7 +544,7 @@ class PostmanLayerGenerator implements LayerGenerator
             $targets[] = 'Tenant';
         }
 
-        return $targets !== [] ? $targets : ['Shared'];
+        return $targets;
     }
 
     private function isContextSegment(string $segment): bool
@@ -1743,7 +1747,10 @@ class PostmanLayerGenerator implements LayerGenerator
         if (is_array($incomingChildren)) {
             $existingChildren = is_array($existing['item'] ?? null) ? $existing['item'] : [];
             $mergedChildrenMap = $this->mergeItems($existingChildren, $incomingChildren, $depth + 1, $currentName);
-            $merged['item'] = $this->normalizeItemOrder($mergedChildrenMap, $depth + 1, $currentName);
+            $merged['item'] = $this->cleanupContextArtifacts(
+                $this->normalizeItemOrder($mergedChildrenMap, $depth + 1, $currentName),
+                $currentName
+            );
         }
 
         return $merged;
@@ -1821,6 +1828,27 @@ class PostmanLayerGenerator implements LayerGenerator
         }
 
         return array_values($ordered);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @return array<int, array<string, mixed>>
+     */
+    private function cleanupContextArtifacts(array $items, string $parentName): array
+    {
+        if (! in_array($parentName, ['Central', 'Tenant'], true)) {
+            return $items;
+        }
+
+        return array_values(array_filter($items, static function ($item): bool {
+            if (! is_array($item)) {
+                return true;
+            }
+
+            $name = $item['name'] ?? null;
+
+            return ! (is_string($name) && $name === 'Shared');
+        }));
     }
 
     /**
