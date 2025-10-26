@@ -1000,28 +1000,52 @@ SIGNATURE;
         return $normalized !== '' ? $normalized : 'central';
     }
 
-    private function renderSanctumReminder(): void
-    {
-        $this->warn('Laravel Sanctum no está instalado y es necesario para el scaffolding de autenticación.');
-        $this->line('  composer require laravel/sanctum');
-        $this->line('  php artisan vendor:publish --provider="Laravel\\Sanctum\\SanctumServiceProvider" --tag=migrations');
-        $this->line('  php artisan migrate');
-        $this->line('  # Opcional: publicar configuración con --tag=config');
-    }
-
     private function renderSpatieReminder(): void
     {
         $this->warn('Se detectó el driver de roles "spatie" pero el paquete "spatie/laravel-permission" no está instalado.');
-        $this->line('  composer require spatie/laravel-permission');
-        $this->line('  php artisan vendor:publish --provider="Spatie\\Permission\\PermissionServiceProvider" --tag="permission-migrations"');
-        $this->line('  php artisan migrate');
-        $this->line('  # Opcional: publicar la configuración con --tag="permission-config"');
 
         $blueprints = array_values(array_unique(array_filter($this->spatieRolesBlueprints)));
 
         if ($blueprints !== []) {
             $this->line('  Blueprint(s) que requieren el driver: ' . implode(', ', $blueprints));
         }
+
+        $commands = [
+            'composer require spatie/laravel-permission',
+            'php artisan vendor:publish --provider="Spatie\\Permission\\PermissionServiceProvider" --tag="permission-migrations"',
+            'php artisan migrate',
+        ];
+
+        $optionalCommand = 'php artisan vendor:publish --provider="Spatie\\Permission\\PermissionServiceProvider" --tag="permission-config"';
+
+        $shouldInstall = false;
+
+        if ($this->canPromptForInstallation()) {
+            $shouldInstall = $this->askLocalizedConfirmation('¿Deseas instalar "spatie/laravel-permission" ahora?', false);
+        }
+
+        if ($shouldInstall) {
+            $this->line('  Instalando "spatie/laravel-permission"...');
+            $installed = $this->runInstallCommandSequence($commands);
+
+            if ($installed) {
+                $this->info('  Instalación de "spatie/laravel-permission" completada.');
+            } else {
+                $this->error('  La instalación de "spatie/laravel-permission" falló. Revisa los comandos anteriores.');
+            }
+
+            $this->line(sprintf('  (Opcional) %s', $optionalCommand));
+            $this->newLine();
+
+            return;
+        }
+
+        foreach ($commands as $command) {
+            $this->line(sprintf('  %s', $command));
+        }
+
+        $this->line(sprintf('  # Opcional: ejecutar %s', $optionalCommand));
+        $this->newLine();
     }
 
     private function authScaffoldingRequiresSanctum(?Blueprint $blueprint): bool
@@ -1583,17 +1607,8 @@ SIGNATURE;
             }
 
             $shouldInstall = false;
-            $interactive = $this->input->isInteractive();
 
-            if ($interactive && function_exists('app')) {
-                try {
-                    $interactive = ! app()->environment('testing');
-                } catch (Throwable $exception) {
-                    $interactive = false;
-                }
-            }
-
-            if ($interactive) {
+            if ($this->canPromptForInstallation()) {
                 $shouldInstall = $this->askLocalizedConfirmation(
                     sprintf('¿Deseas instalar "%s" ahora?', $label),
                     false
@@ -1616,7 +1631,7 @@ SIGNATURE;
             }
 
             $this->line(sprintf('  Instalando "%s"...', $label));
-            $installed = $this->runTenancyInstallCommands($commands);
+            $installed = $this->runInstallCommandSequence($commands);
 
             if ($installed) {
                 $this->info(sprintf('  Instalación de "%s" completada.', $label));
@@ -1632,7 +1647,7 @@ SIGNATURE;
         }
     }
 
-    private function runTenancyInstallCommands(array $commands): bool
+    private function runInstallCommandSequence(array $commands): bool
     {
         $basePath = function_exists('base_path') ? base_path() : getcwd();
 
@@ -1653,6 +1668,25 @@ SIGNATURE;
             });
 
             if ($exitCode !== 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function canPromptForInstallation(): bool
+    {
+        if (! ($this->input instanceof InputInterface) || ! $this->input->isInteractive()) {
+            return false;
+        }
+
+        if (function_exists('app')) {
+            try {
+                if (app()->environment('testing')) {
+                    return false;
+                }
+            } catch (Throwable $exception) {
                 return false;
             }
         }
