@@ -470,6 +470,26 @@ class YamlBlueprintParser implements BlueprintParser
             }
         }
 
+        if (array_key_exists('scope', $value)) {
+            $scope = $value['scope'];
+
+            if ($scope === null) {
+                // ignore intentionally
+            } elseif (! is_string($scope)) {
+                throw new BlueprintParseException('La clave "tenancy.scope" debe ser una cadena.');
+            } else {
+                $normalizedScope = strtolower(trim($scope));
+
+                if ($normalizedScope !== '') {
+                    if (! in_array($normalizedScope, ['central', 'tenant'], true)) {
+                        throw new BlueprintParseException(sprintf('La clave "tenancy.scope" contiene un valor inválido: "%s".', $scope));
+                    }
+
+                    $result['scope'] = $normalizedScope;
+                }
+            }
+        }
+
         return $result;
     }
 
