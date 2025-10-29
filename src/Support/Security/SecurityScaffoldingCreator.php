@@ -29,6 +29,7 @@ class SecurityScaffoldingCreator
         $matrix = $this->normalizeMatrix($options['matrix'] ?? []);
 
         $this->ensureConfigFile($driver);
+    $this->ensurePermissionTablesMigration($driver);
 
         $shouldRegisterSeeder = $driver === 'spatie' && $matrix !== [];
 
@@ -249,6 +250,114 @@ class SecurityScaffoldingCreator
 
         $this->files->ensureDirectoryExists((string) dirname($path));
         $this->files->put($path, $contents);
+    }
+
+    private function ensurePermissionTablesMigration(string $driver): void
+    {
+        if ($driver !== 'spatie') {
+            return;
+        }
+
+        $migrationPath = $this->findPermissionMigrationPath();
+
+        if ($migrationPath === null || ! $this->files->exists($migrationPath)) {
+            return;
+        }
+
+        $identifier = $this->detectUsersPrimaryKeyType();
+
+        if ($identifier === null) {
+            return;
+        }
+
+        $contents = $this->files->get($migrationPath);
+
+        if (! is_string($contents) || $contents === '') {
+            return;
+        }
+
+        $target = "->unsignedBigInteger(\$columnNames['model_morph_key'])";
+
+        if (! str_contains($contents, $target)) {
+            return;
+        }
+
+        $replacementMethod = match ($identifier) {
+            'ulid' => 'ulid',
+            default => 'uuid',
+        };
+
+        $updated = str_replace(
+            [$target . ';'],
+            ["->" . $replacementMethod . "(\$columnNames['model_morph_key']);"],
+            $contents
+        );
+
+        if ($updated === $contents) {
+            return;
+        }
+
+        $this->files->put($migrationPath, $updated);
+    }
+
+    private function findPermissionMigrationPath(): ?string
+    {
+        $migrationsRoot = $this->resolvePath('database/migrations');
+
+        if (! is_dir($migrationsRoot)) {
+            return null;
+        }
+
+        $pattern = rtrim($migrationsRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*_create_permission_tables.php';
+        $files = glob($pattern);
+
+        if ($files === false || $files === []) {
+            return null;
+        }
+
+        sort($files);
+
+        $candidate = $files[0];
+
+        return is_string($candidate) ? $candidate : null;
+    }
+
+    private function detectUsersPrimaryKeyType(): ?string
+    {
+        $migrationsRoot = $this->resolvePath('database/migrations');
+
+        if (! is_dir($migrationsRoot)) {
+            return null;
+        }
+
+        $pattern = rtrim($migrationsRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*_create_users_table.php';
+        $files = glob($pattern);
+
+        if ($files === false || $files === []) {
+            return null;
+        }
+
+        foreach ($files as $file) {
+            if (! is_string($file) || $file === '') {
+                continue;
+            }
+
+            $contents = @file_get_contents($file);
+
+            if ($contents === false || $contents === '') {
+                continue;
+            }
+
+            if (preg_match("/->uuid\\s*\\(\\s*['\"]id['\"]\\s*\\)/i", $contents) === 1) {
+                return 'uuid';
+            }
+
+            if (preg_match("/->ulid\\s*\\(\\s*['\"]id['\"]\\s*\\)/i", $contents) === 1) {
+                return 'ulid';
+            }
+        }
+
+        return null;
     }
 
     private function renderConfigContents(string $driver): string
