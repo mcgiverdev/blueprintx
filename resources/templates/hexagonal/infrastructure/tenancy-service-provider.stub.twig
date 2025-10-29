@@ -30,6 +30,10 @@ class TenancyServiceProvider extends ServiceProvider
      */
     public function events(): array
     {
+        if (! $this->tenancyDependenciesAvailable()) {
+            return [];
+        }
+
         return [
             Events\CreatingTenant::class => [],
             Events\TenantCreated::class => [
@@ -99,6 +103,10 @@ class TenancyServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        if (! $this->tenancyDependenciesAvailable()) {
+            return;
+        }
+
         $this->bootEvents();
         $this->mapRoutes();
         $this->makeTenancyMiddlewareHighestPriority();
@@ -129,6 +137,10 @@ class TenancyServiceProvider extends ServiceProvider
 
     protected function makeTenancyMiddlewareHighestPriority(): void
     {
+        if (! $this->tenancyDependenciesAvailable()) {
+            return;
+        }
+
         $tenancyMiddleware = [
             Middleware\PreventAccessFromCentralDomains::class,
             Middleware\InitializeTenancyByDomain::class,
@@ -141,5 +153,12 @@ class TenancyServiceProvider extends ServiceProvider
         foreach (array_reverse($tenancyMiddleware) as $middleware) {
             $this->app[\Illuminate\Contracts\Http\Kernel::class]->prependToMiddlewarePriority($middleware);
         }
+    }
+
+    protected function tenancyDependenciesAvailable(): bool
+    {
+        return class_exists(\Stancl\JobPipeline\JobPipeline::class)
+            && class_exists(\Stancl\Tenancy\Events\TenantCreated::class)
+            && class_exists(\Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains::class);
     }
 }
