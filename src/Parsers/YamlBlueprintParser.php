@@ -120,6 +120,8 @@ class YamlBlueprintParser implements BlueprintParser
             throw new BlueprintParseException(sprintf('El blueprint "%s" debe declarar al menos un campo.', $fullPath));
         }
 
+        $fields = $this->applyIdentifierOverrides($table, $fields);
+
         $relations = $this->normalizeArrayOfArrays($data, 'relations');
         $options = array_merge($this->defaultOptions, Arr::get($data, 'options', []));
 
@@ -175,6 +177,80 @@ class YamlBlueprintParser implements BlueprintParser
             'tenancy' => $tenancy,
             'security' => $security,
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $fields
+     * @return array<int, array<string, mixed>>
+     */
+    private function applyIdentifierOverrides(string $table, array $fields): array
+    {
+        $override = $this->detectPrimaryKeyType($table);
+
+        if ($override === null) {
+            return $fields;
+        }
+
+        return array_map(function (array $field) use ($override): array {
+            $name = isset($field['name']) && is_string($field['name']) ? Str::lower($field['name']) : null;
+            $type = isset($field['type']) && is_string($field['type']) ? Str::lower($field['type']) : null;
+
+            if ($name !== 'id' || $type === null) {
+                return $field;
+            }
+
+            if ($type !== 'id') {
+                return $field;
+            }
+
+            $field['type'] = $override;
+
+            return $field;
+        }, $fields);
+    }
+
+    private function detectPrimaryKeyType(string $table): ?string
+    {
+        if (! function_exists('base_path')) {
+            return null;
+        }
+
+        $basePath = base_path('database/migrations');
+
+        if (! is_dir($basePath)) {
+            return null;
+        }
+
+        $table = Str::snake($table);
+        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*_create_' . $table . '_table.php';
+
+        $files = glob($pattern);
+
+        if ($files === false || $files === []) {
+            return null;
+        }
+
+        foreach ($files as $file) {
+            if (! is_string($file) || $file === '') {
+                continue;
+            }
+
+            $contents = @file_get_contents($file);
+
+            if ($contents === false || $contents === '') {
+                continue;
+            }
+
+            if (preg_match("/->uuid\s*\(\s*['\"]id['\"]\s*\)/i", $contents) === 1) {
+                return 'uuid';
+            }
+
+            if (preg_match("/->ulid\s*\(\s*['\"]id['\"]\s*\)/i", $contents) === 1) {
+                return 'ulid';
+            }
+        }
+
+        return null;
     }
 
     /**
