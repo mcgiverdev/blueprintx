@@ -1,8 +1,15 @@
----
 layout: default
 title: Historial de versiones
 nav_order: 99
----
+
+## 1.3.0-beta.1 · 2025-10-30
+
+- Incorpora blueprints de ejemplo para entornos central, compartido y tenant (usuarios, compañías, tenants, empleados) con reglas de dominio y guards diferenciados para acelerar pruebas de multi-inquilino.
+- El esquema JSON acepta `docs.summary`, permitiendo describir endpoints generados sin romper la validación.
+- `config('blueprintx.paths.blueprints')` ahora puede sobreescribirse vía `BLUEPRINTX_BLUEPRINTS_PATH`, simplificando la ejecución de comandos desde workspaces externos.
+- `TestsLayerGenerator` elimina `use` duplicados cuando la entidad se referencia a sí misma en relaciones, evitando errores al regenerar suites.
+- `GenerationHistoryManager` guarda un `sequence` en microsegundos para preservar el orden real de corridas y asegurar rollbacks deterministas.
+- Se documenta `docs/tenancy-flow.md` con el flujo completo de provisión central → tenant, autenticaciones y sincronización de catálogos compartidos.
 
 ## 1.2.0 · 2025-10-21
 
